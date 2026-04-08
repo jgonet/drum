@@ -1,56 +1,78 @@
 defmodule Crank.Step.Server do
   use GenServer, restart: :temporary
-  alias Crank.{Command, Output, Utils}
+  alias Crank.{Output, Registry, Utils}
 
   def start_link(args) do
     GenServer.start_link(__MODULE__, args)
   end
 
   @impl true
-  def init(%{step: step, pipeline_id: pipeline_id, notify: notify, worker_sup: worker_sup}) do
+  def init(%{step: step, pipeline_id: pipeline_id}) do
     state = %{
       id: step.id,
       name: step.name,
-      commands: step.commands,
-      pipeline_id: pipeline_id,
-      notify: notify,
-      worker_sup: worker_sup
+      action: step.action,
+      pipeline_id: pipeline_id
     }
 
-    Output.Server.emit({:step_started, pipeline_id, %{id: step.id, name: step.name, pipeline_id: pipeline_id, now_ms: Utils.now_ms()}})
-
-    {:ok, state, {:continue, :run_next}}
+    event_data = %{id: step.id, name: step.name, pipeline_id: pipeline_id, now_ms: Utils.now_ms()}
+    Output.Server.emit({:step_started, pipeline_id, event_data})
+    {:ok, state, {:continue, :run}}
   end
 
   @impl true
-  def handle_continue(:run_next, %{commands: []} = state) do
-    Output.Server.emit({:step_finished, state.pipeline_id, %{id: state.id, name: state.name, pipeline_id: state.pipeline_id, now_ms: Utils.now_ms()}})
-    send(state.notify, {:step_done, state.id, :ok})
+  def handle_continue(:run, state) do
+    server = self()
+
+    cmd_opts = %{
+      worker_sup: Registry.worker_sup(state.pipeline_id),
+      pipeline_id: state.pipeline_id,
+      step_id: state.id
+    }
+
+    spawn_link(fn ->
+      result =
+        try do
+          state.action.(%{}, cmd_opts)
+          :ok
+        rescue
+          e -> {:error, {:action_error, e}}
+        end
+
+      send(server, {:action_done, result})
+    end)
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:action_done, :ok}, state) do
+    event_data = %{
+      id: state.id,
+      name: state.name,
+      pipeline_id: state.pipeline_id,
+      now_ms: Utils.now_ms()
+    }
+
+    Output.Server.emit({:step_finished, state.pipeline_id, event_data})
+    pipeline = Registry.pipeline(state.pipeline_id)
+    GenServer.cast(pipeline, {:step_done, state.id, :ok})
     {:stop, :normal, state}
   end
 
   @impl true
-  def handle_continue(:run_next, %{commands: [cmd | rest]} = state) do
-    case Command.start(cmd, %{worker_sup: state.worker_sup, notify: self(), pipeline_id: state.pipeline_id, step_id: state.id}) do
-      {:ok, _} ->
-        {:noreply, %{state | commands: rest}}
+  def handle_info({:action_done, {:error, reason}}, state) do
+    event_data = %{
+      id: state.id,
+      name: state.name,
+      pipeline_id: state.pipeline_id,
+      reason: reason,
+      now_ms: Utils.now_ms()
+    }
 
-      {:error, reason} ->
-        Output.Server.emit({:step_failed, state.pipeline_id, %{id: state.id, name: state.name, pipeline_id: state.pipeline_id, reason: reason, now_ms: Utils.now_ms()}})
-        send(state.notify, {:step_done, state.id, {:error, reason}})
-        {:stop, {:shutdown, :command_start_failed}, state}
-    end
-  end
-
-  @impl true
-  def handle_info({:command_done, _id, :ok}, state) do
-    {:noreply, state, {:continue, :run_next}}
-  end
-
-  @impl true
-  def handle_info({:command_done, _id, {:error, reason}}, state) do
-    Output.Server.emit({:step_failed, state.pipeline_id, %{id: state.id, name: state.name, pipeline_id: state.pipeline_id, reason: reason, now_ms: Utils.now_ms()}})
-    send(state.notify, {:step_done, state.id, {:error, reason}})
-    {:stop, {:shutdown, :command_failed}, state}
+    Output.Server.emit({:step_failed, state.pipeline_id, event_data})
+    pipeline = Registry.pipeline(state.pipeline_id)
+    GenServer.cast(pipeline, {:step_done, state.id, {:error, reason}})
+    {:stop, {:shutdown, :action_failed}, state}
   end
 end

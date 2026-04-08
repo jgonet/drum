@@ -86,6 +86,46 @@ defmodule CrankTest do
     assert {:error, _} = await_pipeline(pid)
   end
 
+  test "function step runs command via Crank.cmd!" do
+    {:ok, pid} =
+      run_pipeline([{"step1", fn _ctx, cmd_opts -> Crank.cmd!("echo from_fn", cmd_opts) end}])
+
+    events = collect_events(pid)
+
+    stdout_data = for {:command_stdout, ^pid, %{data: d}} <- events, do: d
+    assert Enum.any?(stdout_data, &String.contains?(&1, "from_fn"))
+  end
+
+  test "function step with multiple Crank.cmd! calls runs them sequentially" do
+    {:ok, pid} =
+      run_pipeline([
+        {"step1",
+         fn _ctx, cmd_opts ->
+           Crank.cmd!("echo cmd_one", cmd_opts)
+           Crank.cmd!("echo cmd_two", cmd_opts)
+         end}
+      ])
+
+    events = collect_events(pid)
+
+    cmd_events =
+      for {t, _, _} = event <- events, t in [:command_started, :command_finished], do: event
+
+    assert [
+             {:command_started, ^pid, %{cmd: "echo cmd_one"}},
+             {:command_finished, ^pid, _},
+             {:command_started, ^pid, %{cmd: "echo cmd_two"}},
+             {:command_finished, ^pid, _}
+           ] = cmd_events
+  end
+
+  test "function step that raises fails the pipeline" do
+    {:ok, pid} =
+      run_pipeline([{"step1", fn _ctx, _cmd_opts -> raise "boom" end}])
+
+    assert {:error, _} = await_pipeline(pid)
+  end
+
   test "isolated pipelines" do
     {:ok, pid1} = run_pipeline([{"step1", "echo pipeline1_output"}])
     {:ok, pid2} = run_pipeline([{"step2", "echo pipeline2_output"}])

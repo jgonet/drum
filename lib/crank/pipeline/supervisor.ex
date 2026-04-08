@@ -11,8 +11,7 @@ defmodule Crank.Pipeline.Supervisor do
 
     pipeline_server_args = %{
       pipeline: pipeline,
-      name: Crank.Registry.pipeline(pipeline.id),
-      worker_sup: worker_sup
+      name: Crank.Registry.pipeline(pipeline.id)
     }
 
     children = [

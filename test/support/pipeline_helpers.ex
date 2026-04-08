@@ -1,9 +1,9 @@
 defmodule Crank.Test.PipelineHelpers do
-  alias Crank.Step
+  alias Crank.{Pipeline, Step}
 
   def build_pipeline(steps) do
     Enum.reduce(steps, Crank.new(), fn {name, cmd_or_cmds}, pipeline ->
-      Step.new(pipeline, name, cmd_or_cmds)
+      Pipeline.add(pipeline, Step.new(name, cmd_or_cmds))
     end)
   end
 
