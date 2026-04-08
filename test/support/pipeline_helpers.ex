@@ -1,14 +1,16 @@
 defmodule Crank.Test.PipelineHelpers do
   alias Crank.{Pipeline, Step}
 
-  def build_pipeline(steps) do
-    Enum.reduce(steps, Crank.new(), fn {name, cmd_or_cmds}, pipeline ->
+  def build_pipeline(steps, opts \\ []) do
+    ctx = Keyword.get(opts, :ctx, %{})
+
+    Enum.reduce(steps, Crank.new(ctx), fn {name, cmd_or_cmds}, pipeline ->
       Pipeline.add(pipeline, Step.new(name, cmd_or_cmds))
     end)
   end
 
-  def run_pipeline(steps) do
-    pipeline = build_pipeline(steps)
+  def run_pipeline(steps, opts \\ []) do
+    pipeline = build_pipeline(steps, opts)
     id = pipeline.id
     Crank.Output.Test.subscribe(id, self())
     ExUnit.Callbacks.on_exit(fn -> Crank.Output.Test.unsubscribe(id) end)

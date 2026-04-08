@@ -3,7 +3,7 @@ defmodule Crank do
   """
   alias Crank.{Pipeline, Command}
 
-  def new(), do: Pipeline.new()
+  def new(ctx \\ %{}) when is_map(ctx), do: Pipeline.new(ctx)
 
   def run(%Pipeline{} = pipeline), do: Pipeline.start_pipeline(pipeline)
 

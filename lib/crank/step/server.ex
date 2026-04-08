@@ -7,12 +7,13 @@ defmodule Crank.Step.Server do
   end
 
   @impl true
-  def init(%{step: step, pipeline_id: pipeline_id}) do
+  def init(%{step: step, pipeline_id: pipeline_id, ctx: ctx}) do
     state = %{
       id: step.id,
       name: step.name,
       action: step.action,
-      pipeline_id: pipeline_id
+      pipeline_id: pipeline_id,
+      ctx: ctx
     }
 
     event_data = %{id: step.id, name: step.name, pipeline_id: pipeline_id, now_ms: Utils.now_ms()}
@@ -31,22 +32,30 @@ defmodule Crank.Step.Server do
     }
 
     spawn_link(fn ->
-      result =
+      {result, ctx_op} =
         try do
-          state.action.(%{}, cmd_opts)
-          :ok
+          raw = state.action.(state.ctx, cmd_opts)
+
+          ctx_op =
+            case raw do
+              {:ctx_add, map} when is_map(map) -> {:ctx_add, map}
+              {:ctx_set, map} when is_map(map) -> {:ctx_set, map}
+              _ -> nil
+            end
+
+          {:ok, ctx_op}
         rescue
-          e -> {:error, {:action_error, e}}
+          e -> {{:error, {:action_error, e}}, nil}
         end
 
-      send(server, {:action_done, result})
+      send(server, {:action_done, result, ctx_op})
     end)
 
     {:noreply, state}
   end
 
   @impl true
-  def handle_info({:action_done, :ok}, state) do
+  def handle_info({:action_done, :ok, ctx_op}, state) do
     event_data = %{
       id: state.id,
       name: state.name,
@@ -56,12 +65,12 @@ defmodule Crank.Step.Server do
 
     Output.Server.emit({:step_finished, state.pipeline_id, event_data})
     pipeline = Registry.pipeline(state.pipeline_id)
-    GenServer.cast(pipeline, {:step_done, state.id, :ok})
+    GenServer.cast(pipeline, {:step_done, state.id, :ok, ctx_op})
     {:stop, :normal, state}
   end
 
   @impl true
-  def handle_info({:action_done, {:error, reason}}, state) do
+  def handle_info({:action_done, {:error, reason}, _ctx_op}, state) do
     event_data = %{
       id: state.id,
       name: state.name,

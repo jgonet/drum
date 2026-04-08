@@ -126,6 +126,88 @@ defmodule CrankTest do
     assert {:error, _} = await_pipeline(pid)
   end
 
+  test "initial ctx is passed to the first step" do
+    test_pid = self()
+
+    {:ok, pid} =
+      run_pipeline([{"step1", fn ctx, _cmd_opts -> send(test_pid, {:ctx, ctx}) end}],
+        ctx: %{hello: :world}
+      )
+
+    assert_receive {:ctx, %{hello: :world}}
+    assert {:ok, _} = await_pipeline(pid)
+  end
+
+  test "ctx_add merges keys into ctx for the next step" do
+    test_pid = self()
+
+    {:ok, pid} =
+      run_pipeline([
+        {"step1", fn _ctx, _cmd_opts -> {:ctx_add, %{key: :value}} end},
+        {"step2", fn ctx, _cmd_opts -> send(test_pid, {:ctx, ctx}) end}
+      ])
+
+    assert_receive {:ctx, %{key: :value}}
+    assert {:ok, _} = await_pipeline(pid)
+  end
+
+  test "ctx_add with conflicting keys fails the pipeline" do
+    {:ok, pid} =
+      run_pipeline(
+        [{"step1", fn _ctx, _cmd_opts -> {:ctx_add, %{key: :new}} end}],
+        ctx: %{key: :original}
+      )
+
+    assert {:error, _} = await_pipeline(pid)
+  end
+
+  test "ctx_set replaces ctx entirely for the next step" do
+    test_pid = self()
+
+    {:ok, pid} =
+      run_pipeline(
+        [
+          {"step1", fn _ctx, _cmd_opts -> {:ctx_set, %{fresh: :ctx}} end},
+          {"step2", fn ctx, _cmd_opts -> send(test_pid, {:ctx, ctx}) end}
+        ],
+        ctx: %{old: :key}
+      )
+
+    assert_receive {:ctx, received_ctx}
+    assert received_ctx == %{fresh: :ctx}
+    assert {:ok, _} = await_pipeline(pid)
+  end
+
+  test "ctx_set preserves raw key" do
+    test_pid = self()
+
+    {:ok, pid} =
+      run_pipeline(
+        [
+          {"step1", fn _ctx, _cmd_opts -> {:ctx_set, %{fresh: :ctx}} end},
+          {"step2", fn ctx, _cmd_opts -> send(test_pid, {:ctx, ctx}) end}
+        ],
+        ctx: %{raw: %{argv: []}, old: :key}
+      )
+
+    assert_receive {:ctx, received_ctx}
+    assert received_ctx == %{fresh: :ctx, raw: %{argv: []}}
+    assert {:ok, _} = await_pipeline(pid)
+  end
+
+  test "non-matching step return value leaves ctx unchanged" do
+    test_pid = self()
+
+    {:ok, pid} =
+      run_pipeline([
+        {"step1", fn _ctx, _cmd_opts -> :some_other_value end},
+        {"step2", fn ctx, _cmd_opts -> send(test_pid, {:ctx, ctx}) end}
+      ])
+
+    assert_receive {:ctx, %{}}
+    assert {:ok, _} = await_pipeline(pid)
+  end
+
   test "isolated pipelines" do
     {:ok, pid1} = run_pipeline([{"step1", "echo pipeline1_output"}])
     {:ok, pid2} = run_pipeline([{"step2", "echo pipeline2_output"}])
