@@ -1,18 +1,15 @@
 defmodule Crank do
   @moduledoc """
-  Documentation for `Crank`.
   """
+  alias Crank.Pipeline
+  alias Crank.Config
 
-  @doc """
-  Hello world.
+  def new({argv, env}, %{} = config, _opts \\ []) when is_list(argv) and is_map(env) do
+    pipeline =
+      {argv, env}
+      |> Config.to_context!(config)
+      |> Pipeline.new()
 
-  ## Examples
-
-      iex> Crank.hello()
-      :world
-
-  """
-  def hello do
-    :world
+    {:ok, pipeline}
   end
 end

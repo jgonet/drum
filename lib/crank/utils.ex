@@ -1,0 +1,31 @@
+defmodule Crank.Utils do
+  def map_ok(items, f) do
+    results =
+      Enum.reduce_while(items, {:ok, []}, fn item, {:ok, acc} ->
+        case f.(item) do
+          {:ok, mapped} -> {:cont, {:ok, [mapped | acc]}}
+          {:error, _} = err -> {:halt, err}
+        end
+      end)
+
+    case results do
+      {:ok, mapped} -> {:ok, Enum.reverse(mapped)}
+      {:error, _} = err -> err
+    end
+  end
+
+  def reduce_ok(items, acc, f) do
+    Enum.reduce_while(items, {:ok, acc}, fn item, {:ok, inner_acc} ->
+      case f.(item, inner_acc) do
+        {:ok, new_acc} -> {:cont, {:ok, new_acc}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+  end
+
+  def kw_key_collisions(kws) when is_list(kws) do
+    all_keys = Enum.flat_map(kws, &Keyword.keys/1)
+    duplicates = Enum.uniq(all_keys -- Enum.uniq(all_keys))
+    duplicates
+  end
+end
