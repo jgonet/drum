@@ -1,4 +1,6 @@
 defmodule Crank.Utils do
+  def now_ms(), do: System.monotonic_time(:millisecond)
+
   def map_ok(items, f) do
     results =
       Enum.reduce_while(items, {:ok, []}, fn item, {:ok, acc} ->

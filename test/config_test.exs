@@ -139,14 +139,26 @@ defmodule Crank.ConfigTest do
 
   describe "to_context/2: env" do
     test "parses optional env vars" do
-      config = %{flags: [], positional: [], env: [MY_VAR: [string: nil]], resolve: &__MODULE__.id_resolver/1}
+      config = %{
+        flags: [],
+        positional: [],
+        env: [MY_VAR: [string: nil]],
+        resolve: &__MODULE__.id_resolver/1
+      }
+
       result = Config.to_context({[], %{"MY_VAR" => "hello"}}, config)
       assert {:ok, ctx} = result
       assert "hello" = ctx[:MY_VAR]
     end
 
     test "rejects missing required env vars" do
-      config = %{flags: [], positional: [], env: [MY_VAR: [:string]], resolve: &__MODULE__.id_resolver/1}
+      config = %{
+        flags: [],
+        positional: [],
+        env: [MY_VAR: [:string]],
+        resolve: &__MODULE__.id_resolver/1
+      }
+
       assert {:error, _} = Config.to_context({[], %{}}, config)
     end
   end
