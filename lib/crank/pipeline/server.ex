@@ -11,7 +11,8 @@ defmodule Crank.Pipeline.Server do
     state = %{
       items: pipeline.items,
       pipeline_id: pipeline.id,
-      ctx: pipeline.ctx
+      ctx: pipeline.ctx,
+      cd: pipeline.cd
     }
 
     {:ok, state, {:continue, :run_next}}
@@ -25,20 +26,13 @@ defmodule Crank.Pipeline.Server do
   end
 
   @impl true
-  def handle_continue(:run_next, %{items: [%Step{} = step | rest]} = state) do
-    worker_sup = Registry.worker_sup(state.pipeline_id)
-    step_server_args = %{step: step, pipeline_id: state.pipeline_id, ctx: state.ctx}
-    {:ok, _} = DynamicSupervisor.start_child(worker_sup, {Crank.Step.Server, step_server_args})
-    {:noreply, %{state | items: rest}}
-  end
-
-  @impl true
-  def handle_continue(:run_next, %{items: [%Group{} = group | rest]} = state) do
-    worker_sup = Registry.worker_sup(state.pipeline_id)
-    name = Registry.group(state.pipeline_id, group.id)
-    group_server_args = %{group: group, pipeline_id: state.pipeline_id, ctx: state.ctx, name: name}
-    {:ok, _} = DynamicSupervisor.start_child(worker_sup, {Crank.Group.Server, group_server_args})
-    {:noreply, %{state | items: rest}}
+  def handle_continue(:run_next, %{items: [item | rest]} = state) do
+    if Utils.eval_condition(Map.get(item, :if), state.ctx) do
+      start_item(item, rest, state)
+    else
+      emit_skipped(item, state)
+      {:noreply, %{state | items: rest}, {:continue, :run_next}}
+    end
   end
 
   @impl true
@@ -60,6 +54,31 @@ defmodule Crank.Pipeline.Server do
     Output.Server.emit({:pipeline_failed, state.pipeline_id, event_data})
 
     {:stop, {:shutdown, :step_failed}, state}
+  end
+
+  defp start_item(%Step{} = step, rest, state) do
+    worker_sup = Registry.worker_sup(state.pipeline_id)
+    step_server_args = %{step: step, pipeline_id: state.pipeline_id, ctx: state.ctx, parent_cd: state.cd}
+    {:ok, _} = DynamicSupervisor.start_child(worker_sup, {Crank.Step.Server, step_server_args})
+    {:noreply, %{state | items: rest}}
+  end
+
+  defp start_item(%Group{} = group, rest, state) do
+    worker_sup = Registry.worker_sup(state.pipeline_id)
+    name = Registry.group(state.pipeline_id, group.id)
+    group_server_args = %{group: group, pipeline_id: state.pipeline_id, ctx: state.ctx, name: name, parent_cd: state.cd}
+    {:ok, _} = DynamicSupervisor.start_child(worker_sup, {Crank.Group.Server, group_server_args})
+    {:noreply, %{state | items: rest}}
+  end
+
+  defp emit_skipped(%Step{} = step, state) do
+    event_data = %{id: step.id, name: step.name, pipeline_id: state.pipeline_id, group_id: nil, now_ms: Utils.now_ms()}
+    Output.Server.emit({:step_skipped, state.pipeline_id, event_data})
+  end
+
+  defp emit_skipped(%Group{} = group, state) do
+    event_data = %{id: group.id, name: group.name, now_ms: Utils.now_ms()}
+    Output.Server.emit({:group_skipped, state.pipeline_id, event_data})
   end
 
   defp apply_ctx_op(ctx, nil), do: {:ok, ctx}

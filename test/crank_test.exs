@@ -262,8 +262,6 @@ defmodule CrankTest do
     refute Enum.any?(stdout2, &String.contains?(&1, "pipeline1_output"))
   end
 
-  # --- Group tests ---
-
   test "group finishes when all steps finish" do
     {:ok, pid} =
       Crank.new()
@@ -319,13 +317,16 @@ defmodule CrankTest do
   end
 
   test "group fails if a step returns ctx_set" do
+    step = Step.new("s1", fn _ctx, _opts -> {:ctx_set, %{x: 1}} end)
+
     {:ok, pid} =
       Crank.new()
-      |> Crank.group("g", [Step.new("s1", fn _ctx, _opts -> {:ctx_set, %{x: 1}} end)])
+      |> Crank.group("g", [step])
       |> run_pipeline()
 
     events = collect_events(pid)
-    assert Enum.any?(events, &match?({:group_failed, ^pid, _}, &1))
+    step_id = step.id
+    assert Enum.any?(events, &match?({:group_failed, ^pid, %{reason: {:ctx_set_not_allowed, ^step_id}}}, &1))
   end
 
   test "group fails if two steps return the same ctx_add key" do
@@ -348,5 +349,186 @@ defmodule CrankTest do
       |> run_pipeline()
 
     assert {:error, _} = await_pipeline(pid)
+  end
+
+  test "pipeline cd" do
+    {:ok, pid} =
+      Crank.new(%{}, cd: "/tmp")
+      |> Pipeline.add(Step.new("s1", "pwd"))
+      |> run_pipeline()
+
+    events = collect_events(pid)
+    stdout = for {:command_stdout, ^pid, %{data: d}} <- events, do: d
+    assert Enum.any?(stdout, &String.contains?(&1, "tmp"))
+  end
+
+  test "step cd overrides pipeline cd" do
+    {:ok, pid} =
+      Crank.new(%{}, cd: "/tmp")
+      |> Pipeline.add(Step.new("s1", "pwd", cd: "/var"))
+      |> run_pipeline()
+
+    events = collect_events(pid)
+    stdout = for {:command_stdout, ^pid, %{data: d}} <- events, do: d
+    assert Enum.any?(stdout, &String.contains?(&1, "var"))
+    refute Enum.any?(stdout, fn d -> String.trim(d) == "/tmp" end)
+  end
+
+  test "group cd inherited by steps" do
+    {:ok, pid} =
+      Crank.new()
+      |> Crank.group("g", [Step.new("s1", "pwd")], cd: "/tmp")
+      |> run_pipeline()
+
+    events = collect_events(pid)
+    stdout = for {:command_stdout, ^pid, %{data: d}} <- events, do: d
+    assert Enum.any?(stdout, &String.contains?(&1, "tmp"))
+  end
+
+  test "step cd overrides group cd" do
+    {:ok, pid} =
+      Crank.new()
+      |> Crank.group("g", [Step.new("s1", "pwd", cd: "/var")], cd: "/tmp")
+      |> run_pipeline()
+
+    events = collect_events(pid)
+    stdout = for {:command_stdout, ^pid, %{data: d}} <- events, do: d
+    assert Enum.any?(stdout, &String.contains?(&1, "var"))
+    refute Enum.any?(stdout, fn d -> String.trim(d) == "/tmp" end)
+  end
+
+  test "step timeout" do
+    {:ok, pid} =
+      Crank.new()
+      |> Pipeline.add(Step.new("s1", fn _ctx, _opts -> Process.sleep(5_000) end, timeout: 50))
+      |> run_pipeline()
+
+    assert {:error, _} = await_pipeline(pid, 2_000)
+    events = collect_events(pid, 2_000)
+    assert Enum.any?(events, &match?({:step_failed, ^pid, %{reason: :timeout}}, &1))
+  end
+
+  test "step within timeout succeeds" do
+    {:ok, pid} =
+      Crank.new()
+      |> Pipeline.add(Step.new("s1", "echo ok", timeout: 5_000))
+      |> run_pipeline()
+
+    assert {:ok, _} = await_pipeline(pid)
+  end
+
+  test "group timeout" do
+    {:ok, pid} =
+      Crank.new()
+      |> Crank.group("g", [Step.new("s1", fn _ctx, _opts -> Process.sleep(5_000) end)], timeout: 50)
+      |> run_pipeline()
+
+    assert {:error, _} = await_pipeline(pid, 2_000)
+    events = collect_events(pid, 2_000)
+    assert Enum.any?(events, &match?({:group_failed, ^pid, %{reason: :timeout}}, &1))
+  end
+
+  test "step if: boolean" do
+    test_pid = self()
+
+    {:ok, pid} =
+      Crank.new()
+      |> Pipeline.add(Step.new("s1", fn _ctx, _opts -> send(test_pid, :ran) end, if: false))
+      |> Pipeline.add(Step.new("s2", fn _ctx, _opts -> send(test_pid, :done) end))
+      |> run_pipeline()
+
+    events = collect_events(pid)
+    assert_receive :done
+    refute_receive :ran, 100
+    assert Enum.any?(events, &match?({:step_skipped, ^pid, %{name: "s1"}}, &1))
+    assert Enum.any?(events, &match?({:pipeline_finished, ^pid, _}, &1))
+
+    {:ok, pid2} =
+      Crank.new()
+      |> Pipeline.add(Step.new("s1", fn _ctx, _opts -> send(test_pid, :ran) end, if: true))
+      |> run_pipeline()
+
+    assert {:ok, _} = await_pipeline(pid2)
+    assert_receive :ran
+  end
+
+  test "step if: atom" do
+    test_pid = self()
+
+    {:ok, pid} =
+      Crank.new(%{run_it: true})
+      |> Pipeline.add(Step.new("s1", fn _ctx, _opts -> send(test_pid, :ran) end, if: :run_it))
+      |> run_pipeline()
+
+    assert {:ok, _} = await_pipeline(pid)
+    assert_receive :ran
+
+    {:ok, pid2} =
+      Crank.new(%{run_it: false})
+      |> Pipeline.add(Step.new("s1", fn _ctx, _opts -> send(test_pid, :ran) end, if: :run_it))
+      |> Pipeline.add(Step.new("s2", fn _ctx, _opts -> send(test_pid, :done) end))
+      |> run_pipeline()
+
+    assert {:ok, _} = await_pipeline(pid2)
+    assert_receive :done
+    refute_receive :ran, 100
+  end
+
+  test "step if: fn" do
+    test_pid = self()
+
+    {:ok, pid} =
+      Crank.new(%{x: 5})
+      |> Pipeline.add(Step.new("s1", fn _ctx, _opts -> send(test_pid, :ran) end, if: fn ctx -> ctx.x > 3 end))
+      |> run_pipeline()
+
+    assert {:ok, _} = await_pipeline(pid)
+    assert_receive :ran
+  end
+
+  test "group if: false skips" do
+    test_pid = self()
+
+    {:ok, pid} =
+      Crank.new()
+      |> Crank.group("g", [Step.new("s1", fn _ctx, _opts -> send(test_pid, :ran) end)], if: false)
+      |> Pipeline.add(Step.new("s2", fn _ctx, _opts -> send(test_pid, :done) end))
+      |> run_pipeline()
+
+    events = collect_events(pid)
+    assert_receive :done
+    refute_receive :ran, 100
+    assert Enum.any?(events, &match?({:group_skipped, ^pid, %{name: "g"}}, &1))
+    assert Enum.any?(events, &match?({:pipeline_finished, ^pid, _}, &1))
+  end
+
+  test "group step if: false skips, group finishes" do
+    test_pid = self()
+
+    {:ok, pid} =
+      Crank.new()
+      |> Crank.group("g", [
+        Step.new("s1", fn _ctx, _opts -> send(test_pid, :ran) end, if: false),
+        Step.new("s2", fn _ctx, _opts -> send(test_pid, :other) end)
+      ])
+      |> run_pipeline()
+
+    events = collect_events(pid)
+    assert_receive :other
+    refute_receive :ran, 100
+    assert Enum.any?(events, &match?({:step_skipped, ^pid, %{name: "s1"}}, &1))
+    assert Enum.any?(events, &match?({:group_finished, ^pid, _}, &1))
+  end
+
+  test "group all steps skipped is marked skipped" do
+    {:ok, pid} =
+      Crank.new()
+      |> Crank.group("g", [Step.new("s1", "echo hi", if: false)])
+      |> run_pipeline()
+
+    events = collect_events(pid)
+    assert Enum.any?(events, &match?({:group_skipped, ^pid, %{name: "g"}}, &1))
+    refute Enum.any?(events, &match?({:group_finished, ^pid, _}, &1))
+    assert Enum.any?(events, &match?({:pipeline_finished, ^pid, _}, &1))
   end
 end

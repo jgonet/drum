@@ -12,7 +12,8 @@ defmodule Crank.Command do
       cmd: command.cmd,
       notify: opts.notify,
       pipeline_id: opts.pipeline_id,
-      step_id: opts.step_id
+      step_id: opts.step_id,
+      cd: Map.get(opts, :cd)
     }
 
     DynamicSupervisor.start_child(opts.worker_sup, {Crank.Command.Server, command_server_args})

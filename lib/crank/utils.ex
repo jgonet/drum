@@ -25,6 +25,12 @@ defmodule Crank.Utils do
     end)
   end
 
+  def eval_condition(nil, _ctx), do: true
+  def eval_condition(true, _ctx), do: true
+  def eval_condition(false, _ctx), do: false
+  def eval_condition(key, ctx) when is_atom(key), do: !!Map.get(ctx, key)
+  def eval_condition(f, ctx) when is_function(f, 1), do: !!f.(ctx)
+
   def kw_key_collisions(kws) when is_list(kws) do
     all_keys = Enum.flat_map(kws, &Keyword.keys/1)
     duplicates = Enum.uniq(all_keys -- Enum.uniq(all_keys))

@@ -7,37 +7,58 @@ defmodule Crank.Group.Server do
   end
 
   @impl true
-  def init(%{group: group, pipeline_id: pipeline_id, ctx: ctx}) do
+  def init(%{group: group, pipeline_id: pipeline_id, ctx: ctx} = args) do
+    parent_cd = Map.get(args, :parent_cd)
+    effective_cd = if is_nil(group.cd), do: parent_cd, else: group.cd
+
+    {steps_to_run, steps_to_skip} = Enum.split_with(group.steps, &Utils.eval_condition(Map.get(&1, :if), ctx))
+
     state = %{
       id: group.id,
       name: group.name,
       pipeline_id: pipeline_id,
       ctx: ctx,
-      pending: MapSet.new(group.steps, & &1.id),
-      ctx_ops: []
+      cd: effective_cd,
+      timeout: group.timeout,
+      pending: MapSet.new(steps_to_run, & &1.id),
+      ctx_ops: [],
+      timer_ref: nil
     }
 
-    event_data = %{id: group.id, name: group.name, now_ms: Utils.now_ms()}
-    Output.Server.emit({:group_started, pipeline_id, event_data})
-    {:ok, state, {:continue, {:start_steps, group.steps}}}
+    for step <- steps_to_skip do
+      skip_data = %{id: step.id, name: step.name, pipeline_id: pipeline_id, group_id: group.id, now_ms: Utils.now_ms()}
+      Output.Server.emit({:step_skipped, pipeline_id, skip_data})
+    end
+
+    {:ok, state, {:continue, {:start_steps, steps_to_run}}}
+  end
+
+  @impl true
+  def handle_continue({:start_steps, []}, state) do
+    skip_group(state)
   end
 
   @impl true
   def handle_continue({:start_steps, steps}, state) do
+    event_data = %{id: state.id, name: state.name, now_ms: Utils.now_ms()}
+    Output.Server.emit({:group_started, state.pipeline_id, event_data})
+
     worker_sup = Registry.worker_sup(state.pipeline_id)
 
     args = %{
       step: nil,
       pipeline_id: state.pipeline_id,
       ctx: state.ctx,
-      group_id: state.id
+      group_id: state.id,
+      parent_cd: state.cd
     }
 
     for step <- steps do
       {:ok, _} = DynamicSupervisor.start_child(worker_sup, {Step.Server, %{args | step: step}})
     end
 
-    {:noreply, state}
+    timer_ref = schedule_timeout(state.timeout)
+    {:noreply, %{state | timer_ref: timer_ref}}
   end
 
   @impl true
@@ -54,7 +75,7 @@ defmodule Crank.Group.Server do
         end
 
       {:error, reason} ->
-        fail_group(state, reason)
+        fail_group(state, {reason, step_id})
     end
   end
 
@@ -63,11 +84,29 @@ defmodule Crank.Group.Server do
     fail_group(state, reason)
   end
 
-  defp validate_ctx_op({:ctx_set, _}), do: {:error, :bad_return}
+  @impl true
+  def handle_info(:group_timeout, state) do
+    fail_group(state, :timeout)
+  end
+
+  defp validate_ctx_op({:ctx_set, _}), do: {:error, :ctx_set_not_allowed}
   defp validate_ctx_op({:ctx_add, _} = op), do: {:ok, [op]}
   defp validate_ctx_op(_), do: {:ok, []}
 
+  defp skip_group(state) do
+    cancel_timeout(state.timer_ref)
+    pipeline = Registry.pipeline(state.pipeline_id)
+
+    event_data = %{id: state.id, name: state.name, now_ms: Utils.now_ms()}
+    Output.Server.emit({:group_skipped, state.pipeline_id, event_data})
+
+    GenServer.cast(pipeline, {:step_done, state.id, :ok, nil})
+    {:stop, :normal, state}
+  end
+
   defp finish_group(state) do
+    cancel_timeout(state.timer_ref)
+
     case merge_ctx_ops(state.ctx_ops) do
       {:ok, merged} ->
         pipeline = Registry.pipeline(state.pipeline_id)
@@ -84,6 +123,7 @@ defmodule Crank.Group.Server do
   end
 
   defp fail_group(state, reason) do
+    cancel_timeout(state.timer_ref)
     pipeline = Registry.pipeline(state.pipeline_id)
 
     event_data = %{id: state.id, name: state.name, reason: reason, now_ms: Utils.now_ms()}
@@ -102,4 +142,11 @@ defmodule Crank.Group.Server do
   catch
     {:ctx_conflict, key} -> {:error, {:ctx_conflict, key}}
   end
+
+  defp schedule_timeout(nil), do: nil
+  defp schedule_timeout(:infinity), do: nil
+  defp schedule_timeout(ms) when is_integer(ms), do: Process.send_after(self(), :group_timeout, ms)
+
+  defp cancel_timeout(nil), do: :ok
+  defp cancel_timeout(ref), do: Process.cancel_timer(ref)
 end

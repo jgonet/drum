@@ -7,8 +7,9 @@ defmodule Crank.Command.Server do
   end
 
   @impl true
-  def init(%{id: id, cmd: cmd, notify: notify, pipeline_id: pipeline_id, step_id: step_id}) do
+  def init(%{id: id, cmd: cmd, notify: notify, pipeline_id: pipeline_id, step_id: step_id, cd: cd}) do
     exec_opts = [:monitor, {:stdout, self()}, {:stderr, self()}]
+    exec_opts = if cd, do: [{:cd, cd} | exec_opts], else: exec_opts
 
     case :exec.run(cmd, exec_opts) do
       {:ok, exec_pid, os_pid} ->

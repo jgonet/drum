@@ -9,6 +9,8 @@ defmodule Crank.Step.Server do
   @impl true
   def init(%{step: step, pipeline_id: pipeline_id, ctx: ctx} = args) do
     group_id = Map.get(args, :group_id)
+    parent_cd = Map.get(args, :parent_cd)
+    effective_cd = if is_nil(step.cd), do: parent_cd, else: step.cd
 
     state = %{
       id: step.id,
@@ -16,7 +18,11 @@ defmodule Crank.Step.Server do
       action: step.action,
       pipeline_id: pipeline_id,
       group_id: group_id,
-      ctx: ctx
+      ctx: ctx,
+      cd: effective_cd,
+      timeout: step.timeout,
+      spawn_pid: nil,
+      timer_ref: nil
     }
 
     event_data = %{id: step.id, name: step.name, pipeline_id: pipeline_id, group_id: group_id, now_ms: Utils.now_ms()}
@@ -31,34 +37,39 @@ defmodule Crank.Step.Server do
     cmd_opts = %{
       worker_sup: Registry.worker_sup(state.pipeline_id),
       pipeline_id: state.pipeline_id,
-      step_id: state.id
+      step_id: state.id,
+      cd: state.cd
     }
 
-    spawn_link(fn ->
-      {result, ctx_op} =
-        try do
-          raw = state.action.(state.ctx, cmd_opts)
+    spawn_pid =
+      spawn_link(fn ->
+        {result, ctx_op} =
+          try do
+            raw = state.action.(state.ctx, cmd_opts)
 
-          ctx_op =
-            case raw do
-              {:ctx_add, map} when is_map(map) -> {:ctx_add, map}
-              {:ctx_set, map} when is_map(map) -> {:ctx_set, map}
-              _ -> nil
-            end
+            ctx_op =
+              case raw do
+                {:ctx_add, map} when is_map(map) -> {:ctx_add, map}
+                {:ctx_set, map} when is_map(map) -> {:ctx_set, map}
+                _ -> nil
+              end
 
-          {:ok, ctx_op}
-        rescue
-          e -> {{:error, {:action_error, e}}, nil}
-        end
+            {:ok, ctx_op}
+          rescue
+            e -> {{:error, {:action_error, e}}, nil}
+          end
 
-      send(server, {:action_done, result, ctx_op})
-    end)
+        send(server, {:action_done, result, ctx_op})
+      end)
 
-    {:noreply, state}
+    timer_ref = schedule_timeout(state.timeout)
+    {:noreply, %{state | spawn_pid: spawn_pid, timer_ref: timer_ref}}
   end
 
   @impl true
   def handle_info({:action_done, :ok, ctx_op}, state) do
+    cancel_timeout(state.timer_ref)
+
     event_data = %{
       id: state.id,
       name: state.name,
@@ -74,6 +85,22 @@ defmodule Crank.Step.Server do
 
   @impl true
   def handle_info({:action_done, {:error, reason}, _ctx_op}, state) do
+    cancel_timeout(state.timer_ref)
+    emit_step_failed(state, reason)
+    notify_done(state, {:error, reason}, nil)
+    {:stop, {:shutdown, :action_failed}, state}
+  end
+
+  @impl true
+  def handle_info(:step_timeout, state) do
+    Process.unlink(state.spawn_pid)
+    Process.exit(state.spawn_pid, :kill)
+    emit_step_failed(state, :timeout)
+    notify_done(state, {:error, :timeout}, nil)
+    {:stop, {:shutdown, :action_failed}, state}
+  end
+
+  defp emit_step_failed(state, reason) do
     event_data = %{
       id: state.id,
       name: state.name,
@@ -84,8 +111,6 @@ defmodule Crank.Step.Server do
     }
 
     Output.Server.emit({:step_failed, state.pipeline_id, event_data})
-    notify_done(state, {:error, reason}, nil)
-    {:stop, {:shutdown, :action_failed}, state}
   end
 
   defp notify_done(%{group_id: nil} = state, result, ctx_op) do
@@ -97,4 +122,11 @@ defmodule Crank.Step.Server do
     group = Registry.group(state.pipeline_id, state.group_id)
     GenServer.cast(group, {:step_done, state.id, result, ctx_op})
   end
+
+  defp schedule_timeout(nil), do: nil
+  defp schedule_timeout(:infinity), do: nil
+  defp schedule_timeout(ms) when is_integer(ms), do: Process.send_after(self(), :step_timeout, ms)
+
+  defp cancel_timeout(nil), do: :ok
+  defp cancel_timeout(ref), do: Process.cancel_timer(ref)
 end
