@@ -403,9 +403,9 @@ defmodule CrankTest do
       |> Pipeline.add(Step.new("s1", fn _ctx, _opts -> Process.sleep(5_000) end, timeout: 50))
       |> run_pipeline()
 
-    assert {:error, _} = await_pipeline(pid, 2_000)
-    events = collect_events(pid, 2_000)
+    events = collect_events(pid, 500)
     assert Enum.any?(events, &match?({:step_failed, ^pid, %{reason: :timeout}}, &1))
+    assert Enum.any?(events, &match?({:pipeline_failed, ^pid, _}, &1))
   end
 
   test "step within timeout succeeds" do
@@ -423,9 +423,9 @@ defmodule CrankTest do
       |> Crank.group("g", [Step.new("s1", fn _ctx, _opts -> Process.sleep(5_000) end)], timeout: 50)
       |> run_pipeline()
 
-    assert {:error, _} = await_pipeline(pid, 2_000)
-    events = collect_events(pid, 2_000)
+    events = collect_events(pid, 500)
     assert Enum.any?(events, &match?({:group_failed, ^pid, %{reason: :timeout}}, &1))
+    assert Enum.any?(events, &match?({:pipeline_failed, ^pid, _}, &1))
   end
 
   test "step if: boolean" do
@@ -439,7 +439,7 @@ defmodule CrankTest do
 
     events = collect_events(pid)
     assert_receive :done
-    refute_receive :ran, 100
+    refute_received :ran
     assert Enum.any?(events, &match?({:step_skipped, ^pid, %{name: "s1"}}, &1))
     assert Enum.any?(events, &match?({:pipeline_finished, ^pid, _}, &1))
 
@@ -471,7 +471,7 @@ defmodule CrankTest do
 
     assert {:ok, _} = await_pipeline(pid2)
     assert_receive :done
-    refute_receive :ran, 100
+    refute_received :ran
   end
 
   test "step if: fn" do
@@ -497,7 +497,7 @@ defmodule CrankTest do
 
     events = collect_events(pid)
     assert_receive :done
-    refute_receive :ran, 100
+    refute_received :ran
     assert Enum.any?(events, &match?({:group_skipped, ^pid, %{name: "g"}}, &1))
     assert Enum.any?(events, &match?({:pipeline_finished, ^pid, _}, &1))
   end
@@ -515,7 +515,7 @@ defmodule CrankTest do
 
     events = collect_events(pid)
     assert_receive :other
-    refute_receive :ran, 100
+    refute_received :ran
     assert Enum.any?(events, &match?({:step_skipped, ^pid, %{name: "s1"}}, &1))
     assert Enum.any?(events, &match?({:group_finished, ^pid, _}, &1))
   end

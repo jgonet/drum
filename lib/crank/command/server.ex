@@ -48,7 +48,7 @@ defmodule Crank.Command.Server do
         send(state.notify, {:command_done, state.id, :ok})
 
       code ->
-        Output.Server.emit({:command_failed, state.pipeline_id, event_data})
+        Output.Server.emit({:command_failed, state.pipeline_id, Map.put(event_data, :exit_code, code)})
         send(state.notify, {:command_done, state.id, {:error, {:exit_code, code}}})
     end
 

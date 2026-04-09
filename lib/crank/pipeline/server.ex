@@ -15,6 +15,8 @@ defmodule Crank.Pipeline.Server do
       cd: pipeline.cd
     }
 
+    event_data = %{now_ms: Utils.now_ms()}
+    Output.Server.emit({:pipeline_started, pipeline.id, event_data})
     {:ok, state, {:continue, :run_next}}
   end
 

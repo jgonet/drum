@@ -35,6 +35,7 @@ defmodule Crank do
 
         case result do
           :ok -> :ok
+          {:error, {:exit_code, code}} -> raise Crank.CommandError, exit_code: code, cmd: cmd
           {:error, reason} -> raise "command failed: #{inspect(reason)}"
         end
 

@@ -40,7 +40,7 @@ defmodule Crank.Group.Server do
 
   @impl true
   def handle_continue({:start_steps, steps}, state) do
-    event_data = %{id: state.id, name: state.name, now_ms: Utils.now_ms()}
+    event_data = %{id: state.id, name: state.name, step_count: length(steps), now_ms: Utils.now_ms()}
     Output.Server.emit({:group_started, state.pipeline_id, event_data})
 
     worker_sup = Registry.worker_sup(state.pipeline_id)
