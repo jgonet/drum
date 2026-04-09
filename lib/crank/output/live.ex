@@ -207,7 +207,8 @@ defmodule Crank.Output.Live do
   end
 
   defp items_with_depth(item, state, depth) do
-    own = [{depth, item.name}]
+    # Use max possible display name (total/total) so the time column never shifts as count grows
+    own = [{depth, group_display_name(item, state, :max)}]
 
     if item.type == :group do
       children =
@@ -221,12 +222,32 @@ defmodule Crank.Output.Live do
     end
   end
 
+  defp group_display_name(%{type: :group, name: name, id: id}, state, :max) do
+    total = length(Map.get(state.group_children, id, []))
+    "#{name} (#{total}/#{total})"
+  end
+
+  defp group_display_name(%{type: :group, name: name, id: id}, state, :current) do
+    total = length(Map.get(state.group_children, id, []))
+    done = count_done_children(state, id)
+    "#{name} (#{done}/#{total})"
+  end
+
+  defp group_display_name(%{name: name}, _state, _mode), do: name
+
+  defp count_done_children(state, group_id) do
+    state.group_children
+    |> Map.get(group_id, [])
+    |> Enum.count(&(Map.fetch!(state.item_map, &1).state in [:ok, :failed, :skipped]))
+  end
+
   defp render_item(item, state, depth, now_ms, col) do
     symbol = status_symbol(item.state, now_ms)
     time_tagged = format_elapsed(item, now_ms)
     indent = String.duplicate("  ", depth)
-    padding = String.duplicate(" ", max(col - (depth * 2 + 2 + String.length(item.name)), 1))
-    line = [indent, symbol, " ", item.name, padding | time_tagged]
+    display_name = group_display_name(item, state, :current)
+    padding = String.duplicate(" ", max(col - (depth * 2 + 2 + String.length(display_name)), 1))
+    line = [indent, symbol, " ", display_name, padding | time_tagged]
 
     cond do
       item.type == :group ->
@@ -249,25 +270,41 @@ defmodule Crank.Output.Live do
 
   defp render_cmd_lines(item, state, depth) do
     cmd_indent = String.duplicate("  ", depth + 1)
-    output_indent = cmd_indent <> "  "
 
-    state.cmd_buffers
-    |> Map.values()
-    |> Enum.filter(&(&1.step_id == item.id))
-    |> Enum.sort_by(& &1.seq)
-    |> Enum.flat_map(fn buf ->
+    cmds =
+      state.cmd_buffers
+      |> Map.values()
+      |> Enum.filter(&(&1.step_id == item.id))
+      |> Enum.sort_by(& &1.seq)
+
+    last_idx = length(cmds) - 1
+
+    cmds
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {buf, idx} ->
+      is_last = idx == last_idx
+      tree_char = if is_last, do: "└─", else: "├─"
+      continuation = if is_last, do: "  ", else: "│ "
+
       failed = not is_nil(buf.exit_code)
-      color = if failed, do: :red, else: :faint
-      cmd_line = [cmd_indent, Owl.Data.tag("- " <> buf.cmd, [:italic, color])]
-      stderr_lines = render_output_lines(buf.stderr, "stderr", [:faint, :red], output_indent)
-      stdout_lines = render_output_lines(buf.stdout, "stdout", :faint, output_indent)
+      cmd_color = if failed, do: :red, else: :faint
+
+      exit_tag =
+        if failed, do: [Owl.Data.tag("  [exit #{buf.exit_code}]", :red)], else: []
+
+      cmd_line = [cmd_indent, Owl.Data.tag("#{tree_char} $ #{buf.cmd}", [:italic, cmd_color]) | exit_tag]
+
+      output_indent = cmd_indent <> continuation <> "  "
+      stderr_lines = render_output_lines(buf.stderr, output_indent, [:faint, :red])
+      stdout_lines = render_output_lines(buf.stdout, output_indent, :faint)
+
       [cmd_line] ++ stderr_lines ++ stdout_lines
     end)
   end
 
-  defp render_output_lines([], _label, _color, _indent), do: []
+  defp render_output_lines([], _indent, _color), do: []
 
-  defp render_output_lines(chunks, _label, color, indent) do
+  defp render_output_lines(chunks, indent, color) do
     chunks
     |> Enum.reverse()
     |> Enum.flat_map(fn chunk ->
@@ -279,7 +316,7 @@ defmodule Crank.Output.Live do
   end
 
   defp status_symbol(:todo, _), do: Owl.Data.tag("○", :light_black)
-  defp status_symbol(:ok, _), do: Owl.Data.tag("●", :green)
+  defp status_symbol(:ok, _), do: Owl.Data.tag("✓", :green)
   defp status_symbol(:skipped, _), do: Owl.Data.tag("◆", :yellow)
   defp status_symbol(:failed, _), do: Owl.Data.tag("✕", :red)
 
@@ -364,34 +401,30 @@ defmodule Crank.Output.Live do
 
   defp print_summary(state, elapsed, :ok) do
     parts = [
-      "#{state.successful_steps} successful #{Utils.pluralize(state.successful_steps, "step")}",
-      if(state.skipped_steps > 0, do: "#{state.skipped_steps} skipped", else: nil)
+      "#{state.successful_steps} ok, #{state.skipped_steps} skipped",
+      "started #{state.pipeline_start_time}",
+      "#{Utils.format_duration(elapsed)} total"
     ]
 
     IO.puts("")
-
-    IO.puts(
-      "#{Utils.format_parts(parts)} (started #{state.pipeline_start_time}, took #{Utils.format_duration(elapsed)})"
-    )
+    IO.puts("✓  " <> Enum.join(parts, "  ·  "))
   end
 
   defp print_summary(state, elapsed, :error) do
-    failed_part =
+    failed_label =
       case state.failed_step do
         nil -> "failed"
         name -> "failed #{name}"
       end
 
     parts = [
-      "#{state.successful_steps} successful #{Utils.pluralize(state.successful_steps, "step")}",
-      if(state.skipped_steps > 0, do: "#{state.skipped_steps} skipped", else: nil),
-      failed_part
+      failed_label,
+      "#{state.successful_steps} ok, #{state.skipped_steps} skipped",
+      "started #{state.pipeline_start_time}",
+      "#{Utils.format_duration(elapsed)} total"
     ]
 
     IO.puts("")
-
-    IO.puts(
-      "#{Utils.format_parts(parts)} (started #{state.pipeline_start_time}, took #{Utils.format_duration(elapsed)})"
-    )
+    IO.puts("✕  " <> Enum.join(parts, "  ·  "))
   end
 end
