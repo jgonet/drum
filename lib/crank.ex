@@ -9,6 +9,14 @@ defmodule Crank do
 
   def new(ctx \\ %{}, opts \\ []) when is_map(ctx), do: Pipeline.new(ctx, opts)
 
+  @doc """
+  Merges env sources in order (later sources win). Accepts path strings and maps.
+  Raises if any path string does not exist.
+  """
+  def source_env(sources) when is_list(sources) do
+    Dotenvy.source!(sources, require_files: true, side_effect: nil)
+  end
+
   def run(%Pipeline{} = pipeline), do: Pipeline.start_pipeline(pipeline)
 
   def group(%Pipeline{} = pipeline, name, steps, opts \\ []) when is_list(steps) do

@@ -1,4 +1,5 @@
 %{
+  "dotenvy": {:hex, :dotenvy, "0.9.0", "aad823209cd7c13babe2dc310d9e54ce0203674cbd7631b0ced2a771e3a49532", [:mix], [], "hexpm", "ab959208a9ad02ff26ce1c5d4911668925c12a6cf58287ef77ae63161909c73b"},
   "erlexec": {:hex, :erlexec, "2.2.2", "edb9f1a7d821a9df4efdc82bd11817ab5249dbd294d5c54ec249bd905f10e804", [:rebar3], [], "hexpm", "5e8e3c3773113785361b3b55218d92f7e91509cc9d679bf67c5c3703b394c900"},
   "owl": {:hex, :owl, "0.13.0", "26010e066d5992774268f3163506972ddac0a7e77bfe57fa42a250f24d6b876e", [:mix], [{:ucwidth, "~> 0.2", [hex: :ucwidth, repo: "hexpm", optional: true]}], "hexpm", "59bf9d11ce37a4db98f57cb68fbfd61593bf419ec4ed302852b6683d3d2f7475"},
 }

@@ -27,7 +27,8 @@ defmodule Crank.MixProject do
   defp deps do
     [
       {:erlexec, "~> 2.2"},
-      {:owl, "~> 0.13"}
+      {:owl, "~> 0.13"},
+      {:dotenvy, "~> 0.8", optional: true}
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]
