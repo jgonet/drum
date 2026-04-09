@@ -4,6 +4,7 @@ defmodule Crank.Application do
 
   @impl true
   def start(_type, _args) do
+    Crank.TmpDir.sweep()
     output = Application.get_env(:crank, :output, {Crank.Output.Plain, []})
 
     children = [

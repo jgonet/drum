@@ -8,11 +8,14 @@ defmodule Crank.Pipeline.Server do
 
   @impl true
   def init(%{pipeline: pipeline}) do
+    run_opts = %{worker_sup: Registry.worker_sup(pipeline.id), pipeline_id: pipeline.id, cd: nil}
+    effective_cd = Utils.resolve_cd(pipeline.cd, pipeline.ctx, run_opts)
+
     state = %{
       items: pipeline.items,
       pipeline_id: pipeline.id,
       ctx: pipeline.ctx,
-      cd: pipeline.cd
+      cd: effective_cd
     }
 
     event_data = %{now_ms: Utils.now_ms(), items: summarize_items(pipeline.items)}
@@ -22,6 +25,7 @@ defmodule Crank.Pipeline.Server do
 
   @impl true
   def handle_continue(:run_next, %{items: []} = state) do
+    Crank.TmpDir.Server.cleanup(state.pipeline_id)
     event_data = %{now_ms: Utils.now_ms()}
     Output.Server.emit({:pipeline_finished, state.pipeline_id, event_data})
     {:stop, :normal, state}
@@ -44,6 +48,7 @@ defmodule Crank.Pipeline.Server do
         {:noreply, %{state | ctx: new_ctx}, {:continue, :run_next}}
 
       {:error, reason} ->
+        Crank.TmpDir.Server.cleanup(state.pipeline_id)
         event_data = %{reason: reason, now_ms: Utils.now_ms()}
         Output.Server.emit({:pipeline_failed, state.pipeline_id, event_data})
         {:stop, {:shutdown, :ctx_conflict}, state}
@@ -52,6 +57,7 @@ defmodule Crank.Pipeline.Server do
 
   @impl true
   def handle_cast({:step_done, _id, {:error, reason}, _ctx_op}, state) do
+    Crank.TmpDir.Server.cleanup(state.pipeline_id)
     event_data = %{reason: reason, now_ms: Utils.now_ms()}
     Output.Server.emit({:pipeline_failed, state.pipeline_id, event_data})
 

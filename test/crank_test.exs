@@ -531,4 +531,106 @@ defmodule CrankTest do
     refute Enum.any?(events, &match?({:group_finished, ^pid, _}, &1))
     assert Enum.any?(events, &match?({:pipeline_finished, ^pid, _}, &1))
   end
+
+  test "cd: atom reads from ctx" do
+    {:ok, pid} =
+      Crank.new(%{work: "/tmp"})
+      |> Pipeline.add(Step.new("s1", "pwd", cd: :work))
+      |> run_pipeline()
+
+    events = collect_events(pid)
+    stdout = for {:command_stdout, ^pid, %{data: d}} <- events, do: d
+    assert Enum.any?(stdout, &String.contains?(&1, "tmp"))
+  end
+
+  test "cd: fn receives ctx and run_opts" do
+    test_pid = self()
+
+    {:ok, pid} =
+      Crank.new(%{base: "/tmp"})
+      |> Pipeline.add(Step.new("s1", fn _ctx, _opts -> :ok end,
+        cd: fn ctx, run_opts ->
+          send(test_pid, {:args, ctx, run_opts})
+          ctx.base
+        end
+      ))
+      |> run_pipeline()
+
+    assert_receive {:args, ctx, run_opts}
+    assert ctx.base == "/tmp"
+    assert is_reference(run_opts.pipeline_id)
+    assert {:ok, _} = await_pipeline(pid)
+  end
+
+  test "tmp_dir! creates a tracked directory" do
+    test_pid = self()
+
+    {:ok, pid} =
+      Crank.new()
+      |> Pipeline.add(Step.new("s1", fn _ctx, run_opts ->
+        dir = Crank.tmp_dir!(run_opts, :transient)
+        send(test_pid, {:dir, dir})
+      end))
+      |> run_pipeline()
+
+    assert_receive {:dir, dir}
+    assert File.dir?(dir)
+    assert {:ok, _} = await_pipeline(pid)
+    refute File.exists?(dir)
+  end
+
+  test "tmp_dir! dirs cleaned up after pipeline failure" do
+    test_pid = self()
+
+    {:ok, pid} =
+      Crank.new()
+      |> Pipeline.add(Step.new("s1", fn _ctx, run_opts ->
+        dir = Crank.tmp_dir!(run_opts, :transient)
+        send(test_pid, {:dir, dir})
+        raise "boom"
+      end))
+      |> run_pipeline()
+
+    assert_receive {:dir, dir}
+    assert {:error, _} = await_pipeline(pid)
+    refute File.exists?(dir)
+  end
+
+  test "multiple tmp_dir! calls create distinct dirs, all cleaned up" do
+    test_pid = self()
+
+    {:ok, pid} =
+      Crank.new()
+      |> Pipeline.add(Step.new("s1", fn _ctx, run_opts ->
+        dir1 = Crank.tmp_dir!(run_opts, :transient)
+        dir2 = Crank.tmp_dir!(run_opts, :transient)
+        send(test_pid, {:dirs, dir1, dir2})
+      end))
+      |> run_pipeline()
+
+    assert_receive {:dirs, dir1, dir2}
+    assert dir1 != dir2
+    assert {:ok, _} = await_pipeline(pid)
+    refute File.exists?(dir1)
+    refute File.exists?(dir2)
+  end
+
+  test "pipeline cd: fn with tmp_dir! uses it as working directory" do
+    test_pid = self()
+
+    {:ok, pid} =
+      Crank.new(%{}, cd: fn _ctx, run_opts ->
+        dir = Crank.tmp_dir!(run_opts, :transient)
+        send(test_pid, {:dir, dir})
+        dir
+      end)
+      |> Pipeline.add(Step.new("s1", "pwd"))
+      |> run_pipeline()
+
+    assert_receive {:dir, dir}
+    events = collect_events(pid)
+    stdout = for {:command_stdout, ^pid, %{data: d}} <- events, do: d
+    assert Enum.any?(stdout, &String.contains?(&1, Path.basename(dir)))
+    refute File.exists?(dir)
+  end
 end

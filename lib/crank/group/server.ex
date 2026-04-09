@@ -9,7 +9,8 @@ defmodule Crank.Group.Server do
   @impl true
   def init(%{group: group, pipeline_id: pipeline_id, ctx: ctx} = args) do
     parent_cd = Map.get(args, :parent_cd)
-    effective_cd = if is_nil(group.cd), do: parent_cd, else: group.cd
+    run_opts = %{worker_sup: Registry.worker_sup(pipeline_id), pipeline_id: pipeline_id, cd: parent_cd}
+    effective_cd = Utils.resolve_cd(group.cd, ctx, run_opts) || parent_cd
 
     {steps_to_run, steps_to_skip} = Enum.split_with(group.steps, &Utils.eval_condition(Map.get(&1, :if), ctx))
 

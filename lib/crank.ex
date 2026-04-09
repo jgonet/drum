@@ -23,6 +23,10 @@ defmodule Crank do
     Pipeline.add(pipeline, Group.new(name, steps, opts))
   end
 
+  def tmp_dir!(run_opts, mode) when mode in [:transient] do
+    Crank.TmpDir.Server.create(run_opts.pipeline_id, mode)
+  end
+
   def cmd!(cmd, cmd_opts) when is_binary(cmd) do
     command = Command.new(cmd)
 

@@ -25,6 +25,11 @@ defmodule Crank.Utils do
     end)
   end
 
+  def resolve_cd(nil, _ctx, _run_opts), do: nil
+  def resolve_cd(path, _ctx, _run_opts) when is_binary(path), do: path
+  def resolve_cd(key, ctx, _run_opts) when is_atom(key), do: Map.get(ctx, key)
+  def resolve_cd(f, ctx, run_opts) when is_function(f, 2), do: f.(ctx, run_opts)
+
   def eval_condition(nil, _ctx), do: true
   def eval_condition(true, _ctx), do: true
   def eval_condition(false, _ctx), do: false

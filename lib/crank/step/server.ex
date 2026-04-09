@@ -10,7 +10,8 @@ defmodule Crank.Step.Server do
   def init(%{step: step, pipeline_id: pipeline_id, ctx: ctx} = args) do
     group_id = Map.get(args, :group_id)
     parent_cd = Map.get(args, :parent_cd)
-    effective_cd = if is_nil(step.cd), do: parent_cd, else: step.cd
+    run_opts = %{worker_sup: Registry.worker_sup(pipeline_id), pipeline_id: pipeline_id, step_id: step.id, cd: parent_cd}
+    effective_cd = Utils.resolve_cd(step.cd, ctx, run_opts) || parent_cd
 
     state = %{
       id: step.id,
