@@ -9,6 +9,8 @@ defmodule Crank.Config.Decl do
   def parse(decls), do: {:error, {:bad_format, decls}}
 
   defp parse_single({name, kw}) when is_atom(name) and is_list(kw) do
+    normalized = normalize_name(name)
+
     case parse_type(kw) do
       {:ok, {type, default, required}} ->
         parsed = %__MODULE__{
@@ -19,7 +21,7 @@ defmodule Crank.Config.Decl do
           doc: Keyword.get(kw, :doc)
         }
 
-        {:ok, {name, parsed}}
+        {:ok, {normalized, parsed}}
 
       {:error, {:bad_decl, inner}} ->
         {:error, {:bad_decl, {name, inner}}}
@@ -57,6 +59,10 @@ defmodule Crank.Config.Decl do
   end
 
   defp parse_type(decl), do: {:error, {:bad_decl, decl}}
+
+  defp normalize_name(name) do
+    name |> Atom.to_string() |> String.replace("-", "_") |> String.to_existing_atom()
+  end
 
   defp valid_default?(:string, v), do: is_nil(v) or is_binary(v)
   defp valid_default?(:integer, v), do: is_nil(v) or is_integer(v)

@@ -51,6 +51,18 @@ defmodule Crank.ConfigTest do
       ctx = Config.to_context!({["-j", "8"], %{}}, config)
       assert 8 = ctx.jobs
     end
+
+    test "normalizes kebab-case flag names to snake_case" do
+      config = flags_config("dry-run": [boolean: false])
+      ctx = Config.to_context!({["--dry-run"], %{}}, config)
+      assert true = ctx.dry_run
+    end
+
+    test "normalizes kebab-case enum flag names to snake_case" do
+      config = flags_config("output-format": [enum: :plain, values: [:plain, :json]])
+      ctx = Config.to_context!({["--output-format", "json"], %{}}, config)
+      assert :json = ctx.output_format
+    end
   end
 
   describe "to_context/2: resolve" do
