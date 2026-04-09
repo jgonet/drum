@@ -1,6 +1,6 @@
 defmodule Crank.Pipeline.Server do
   use GenServer, restart: :temporary
-  alias Crank.{Output, Registry, Step, Utils}
+  alias Crank.{Group, Output, Registry, Step, Utils}
 
   def start_link(%{name: name} = args) do
     GenServer.start_link(__MODULE__, args, name: name)
@@ -32,7 +32,14 @@ defmodule Crank.Pipeline.Server do
     {:noreply, %{state | items: rest}}
   end
 
-  # future: handle_continue for %Group{} — same shape: pass ctx, expect {:step_done, id, :ok, ctx_op}
+  @impl true
+  def handle_continue(:run_next, %{items: [%Group{} = group | rest]} = state) do
+    worker_sup = Registry.worker_sup(state.pipeline_id)
+    name = Registry.group(state.pipeline_id, group.id)
+    group_server_args = %{group: group, pipeline_id: state.pipeline_id, ctx: state.ctx, name: name}
+    {:ok, _} = DynamicSupervisor.start_child(worker_sup, {Crank.Group.Server, group_server_args})
+    {:noreply, %{state | items: rest}}
+  end
 
   @impl true
   def handle_cast({:step_done, _id, :ok, ctx_op}, state) do
@@ -48,7 +55,7 @@ defmodule Crank.Pipeline.Server do
   end
 
   @impl true
-  def handle_cast({:step_done, _id, {:error, reason}}, state) do
+  def handle_cast({:step_done, _id, {:error, reason}, _ctx_op}, state) do
     event_data = %{reason: reason, now_ms: Utils.now_ms()}
     Output.Server.emit({:pipeline_failed, state.pipeline_id, event_data})
 

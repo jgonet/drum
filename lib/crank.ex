@@ -1,11 +1,15 @@
 defmodule Crank do
   @moduledoc """
   """
-  alias Crank.{Pipeline, Command}
+  alias Crank.{Pipeline, Command, Group}
 
   def new(ctx \\ %{}) when is_map(ctx), do: Pipeline.new(ctx)
 
   def run(%Pipeline{} = pipeline), do: Pipeline.start_pipeline(pipeline)
+
+  def group(%Pipeline{} = pipeline, name, steps) when is_list(steps) do
+    Pipeline.add(pipeline, Group.new(name, steps))
+  end
 
   def cmd!(cmd, cmd_opts) when is_binary(cmd) do
     command = Command.new(cmd)

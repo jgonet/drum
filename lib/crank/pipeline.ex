@@ -1,6 +1,4 @@
 defmodule Crank.Pipeline do
-  alias Crank.Step
-
   @enforce_keys [:id]
   defstruct [:id, items: [], ctx: %{}]
 
@@ -8,8 +6,8 @@ defmodule Crank.Pipeline do
     %__MODULE__{id: make_ref(), ctx: ctx}
   end
 
-  def add(%__MODULE__{} = pipeline, %Step{} = step) do
-    %{pipeline | items: pipeline.items ++ [step]}
+  def add(%__MODULE__{} = pipeline, item) do
+    %{pipeline | items: pipeline.items ++ [item]}
   end
 
   def start_pipeline(%__MODULE__{} = pipeline) do

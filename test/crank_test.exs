@@ -1,14 +1,23 @@
 defmodule CrankTest do
   use ExUnit.Case, async: true
   import Crank.Test.PipelineHelpers
+  alias Crank.{Pipeline, Step}
 
   test "step" do
-    {:ok, pid} = run_pipeline([{"step1", "echo hello"}])
+    {:ok, pid} =
+      Crank.new()
+      |> Pipeline.add(Step.new("step1", "echo hello"))
+      |> run_pipeline()
+
     assert {:ok, _} = await_pipeline(pid)
   end
 
   test "multiple commands in step" do
-    {:ok, pid} = run_pipeline([{"step1", ["echo a", "echo b"]}])
+    {:ok, pid} =
+      Crank.new()
+      |> Pipeline.add(Step.new("step1", ["echo a", "echo b"]))
+      |> run_pipeline()
+
     events = collect_events(pid)
 
     cmd_events =
@@ -26,7 +35,12 @@ defmodule CrankTest do
   end
 
   test "multiple sequential steps" do
-    {:ok, pid} = run_pipeline([{"step1", "echo first"}, {"step2", "echo second"}])
+    {:ok, pid} =
+      Crank.new()
+      |> Pipeline.add(Step.new("step1", "echo first"))
+      |> Pipeline.add(Step.new("step2", "echo second"))
+      |> run_pipeline()
+
     events = collect_events(pid)
 
     step1_finish_idx = Enum.find_index(events, &match?({:command_finished, _, _}, &1))
@@ -41,7 +55,11 @@ defmodule CrankTest do
   end
 
   test "capture stdout" do
-    {:ok, pid} = run_pipeline([{"step1", "echo hello_stdout"}])
+    {:ok, pid} =
+      Crank.new()
+      |> Pipeline.add(Step.new("step1", "echo hello_stdout"))
+      |> run_pipeline()
+
     events = collect_events(pid)
 
     stdout_data = for {:command_stdout, ^pid, %{data: d}} <- events, do: d
@@ -49,7 +67,11 @@ defmodule CrankTest do
   end
 
   test "capture stderr" do
-    {:ok, pid} = run_pipeline([{"step1", "echo hello_stderr >&2"}])
+    {:ok, pid} =
+      Crank.new()
+      |> Pipeline.add(Step.new("step1", "echo hello_stderr >&2"))
+      |> run_pipeline()
+
     events = collect_events(pid)
 
     stderr_data = for {:command_stderr, ^pid, %{data: d}} <- events, do: d
@@ -57,16 +79,20 @@ defmodule CrankTest do
   end
 
   test "non-zero command exit fails pipeline" do
-    {:ok, pid} = run_pipeline([{"step1", "exit 1"}])
+    {:ok, pid} =
+      Crank.new()
+      |> Pipeline.add(Step.new("step1", "exit 1"))
+      |> run_pipeline()
+
     assert {:error, _} = await_pipeline(pid)
   end
 
   test "non-zero command stops further execution" do
     {:ok, pid} =
-      run_pipeline([
-        {"step1", "exit 1"},
-        {"step2", "echo should_not_run"}
-      ])
+      Crank.new()
+      |> Pipeline.add(Step.new("step1", "exit 1"))
+      |> Pipeline.add(Step.new("step2", "echo should_not_run"))
+      |> run_pipeline()
 
     events = collect_events(pid)
 
@@ -82,13 +108,21 @@ defmodule CrankTest do
   # rather than failing in Command.Server.init. The init error path requires
   # passing a list to :exec.run, which the current string-only API does not support.
   test "non-existent command fails pipeline" do
-    {:ok, pid} = run_pipeline([{"step1", "/doesnt-exist"}])
+    {:ok, pid} =
+      Crank.new()
+      |> Pipeline.add(Step.new("step1", "/doesnt-exist"))
+      |> run_pipeline()
+
     assert {:error, _} = await_pipeline(pid)
   end
 
   test "function step runs command via Crank.cmd!" do
     {:ok, pid} =
-      run_pipeline([{"step1", fn _ctx, cmd_opts -> Crank.cmd!("echo from_fn", cmd_opts) end}])
+      Crank.new()
+      |> Pipeline.add(
+        Step.new("step1", fn _ctx, cmd_opts -> Crank.cmd!("echo from_fn", cmd_opts) end)
+      )
+      |> run_pipeline()
 
     events = collect_events(pid)
 
@@ -98,13 +132,14 @@ defmodule CrankTest do
 
   test "function step with multiple Crank.cmd! calls runs them sequentially" do
     {:ok, pid} =
-      run_pipeline([
-        {"step1",
-         fn _ctx, cmd_opts ->
-           Crank.cmd!("echo cmd_one", cmd_opts)
-           Crank.cmd!("echo cmd_two", cmd_opts)
-         end}
-      ])
+      Crank.new()
+      |> Pipeline.add(
+        Step.new("step1", fn _ctx, cmd_opts ->
+          Crank.cmd!("echo cmd_one", cmd_opts)
+          Crank.cmd!("echo cmd_two", cmd_opts)
+        end)
+      )
+      |> run_pipeline()
 
     events = collect_events(pid)
 
@@ -121,7 +156,9 @@ defmodule CrankTest do
 
   test "function step that raises fails the pipeline" do
     {:ok, pid} =
-      run_pipeline([{"step1", fn _ctx, _cmd_opts -> raise "boom" end}])
+      Crank.new()
+      |> Pipeline.add(Step.new("step1", fn _ctx, _cmd_opts -> raise "boom" end))
+      |> run_pipeline()
 
     assert {:error, _} = await_pipeline(pid)
   end
@@ -130,9 +167,9 @@ defmodule CrankTest do
     test_pid = self()
 
     {:ok, pid} =
-      run_pipeline([{"step1", fn ctx, _cmd_opts -> send(test_pid, {:ctx, ctx}) end}],
-        ctx: %{hello: :world}
-      )
+      Crank.new(%{hello: :world})
+      |> Pipeline.add(Step.new("step1", fn ctx, _cmd_opts -> send(test_pid, {:ctx, ctx}) end))
+      |> run_pipeline()
 
     assert_receive {:ctx, %{hello: :world}}
     assert {:ok, _} = await_pipeline(pid)
@@ -142,10 +179,10 @@ defmodule CrankTest do
     test_pid = self()
 
     {:ok, pid} =
-      run_pipeline([
-        {"step1", fn _ctx, _cmd_opts -> {:ctx_add, %{key: :value}} end},
-        {"step2", fn ctx, _cmd_opts -> send(test_pid, {:ctx, ctx}) end}
-      ])
+      Crank.new()
+      |> Pipeline.add(Step.new("step1", fn _ctx, _cmd_opts -> {:ctx_add, %{key: :value}} end))
+      |> Pipeline.add(Step.new("step2", fn ctx, _cmd_opts -> send(test_pid, {:ctx, ctx}) end))
+      |> run_pipeline()
 
     assert_receive {:ctx, %{key: :value}}
     assert {:ok, _} = await_pipeline(pid)
@@ -153,10 +190,9 @@ defmodule CrankTest do
 
   test "ctx_add with conflicting keys fails the pipeline" do
     {:ok, pid} =
-      run_pipeline(
-        [{"step1", fn _ctx, _cmd_opts -> {:ctx_add, %{key: :new}} end}],
-        ctx: %{key: :original}
-      )
+      Crank.new(%{key: :original})
+      |> Pipeline.add(Step.new("step1", fn _ctx, _cmd_opts -> {:ctx_add, %{key: :new}} end))
+      |> run_pipeline()
 
     assert {:error, _} = await_pipeline(pid)
   end
@@ -165,13 +201,10 @@ defmodule CrankTest do
     test_pid = self()
 
     {:ok, pid} =
-      run_pipeline(
-        [
-          {"step1", fn _ctx, _cmd_opts -> {:ctx_set, %{fresh: :ctx}} end},
-          {"step2", fn ctx, _cmd_opts -> send(test_pid, {:ctx, ctx}) end}
-        ],
-        ctx: %{old: :key}
-      )
+      Crank.new(%{old: :key})
+      |> Pipeline.add(Step.new("step1", fn _ctx, _cmd_opts -> {:ctx_set, %{fresh: :ctx}} end))
+      |> Pipeline.add(Step.new("step2", fn ctx, _cmd_opts -> send(test_pid, {:ctx, ctx}) end))
+      |> run_pipeline()
 
     assert_receive {:ctx, received_ctx}
     assert received_ctx == %{fresh: :ctx}
@@ -182,13 +215,10 @@ defmodule CrankTest do
     test_pid = self()
 
     {:ok, pid} =
-      run_pipeline(
-        [
-          {"step1", fn _ctx, _cmd_opts -> {:ctx_set, %{fresh: :ctx}} end},
-          {"step2", fn ctx, _cmd_opts -> send(test_pid, {:ctx, ctx}) end}
-        ],
-        ctx: %{raw: %{argv: []}, old: :key}
-      )
+      Crank.new(%{raw: %{argv: []}, old: :key})
+      |> Pipeline.add(Step.new("step1", fn _ctx, _cmd_opts -> {:ctx_set, %{fresh: :ctx}} end))
+      |> Pipeline.add(Step.new("step2", fn ctx, _cmd_opts -> send(test_pid, {:ctx, ctx}) end))
+      |> run_pipeline()
 
     assert_receive {:ctx, received_ctx}
     assert received_ctx == %{fresh: :ctx, raw: %{argv: []}}
@@ -199,18 +229,25 @@ defmodule CrankTest do
     test_pid = self()
 
     {:ok, pid} =
-      run_pipeline([
-        {"step1", fn _ctx, _cmd_opts -> :some_other_value end},
-        {"step2", fn ctx, _cmd_opts -> send(test_pid, {:ctx, ctx}) end}
-      ])
+      Crank.new()
+      |> Pipeline.add(Step.new("step1", fn _ctx, _cmd_opts -> :some_other_value end))
+      |> Pipeline.add(Step.new("step2", fn ctx, _cmd_opts -> send(test_pid, {:ctx, ctx}) end))
+      |> run_pipeline()
 
     assert_receive {:ctx, %{}}
     assert {:ok, _} = await_pipeline(pid)
   end
 
   test "isolated pipelines" do
-    {:ok, pid1} = run_pipeline([{"step1", "echo pipeline1_output"}])
-    {:ok, pid2} = run_pipeline([{"step2", "echo pipeline2_output"}])
+    {:ok, pid1} =
+      Crank.new()
+      |> Pipeline.add(Step.new("step1", "echo pipeline1_output"))
+      |> run_pipeline()
+
+    {:ok, pid2} =
+      Crank.new()
+      |> Pipeline.add(Step.new("step2", "echo pipeline2_output"))
+      |> run_pipeline()
 
     events1 = collect_events(pid1)
     events2 = collect_events(pid2)
@@ -223,5 +260,93 @@ defmodule CrankTest do
 
     refute Enum.any?(stdout1, &String.contains?(&1, "pipeline2_output"))
     refute Enum.any?(stdout2, &String.contains?(&1, "pipeline1_output"))
+  end
+
+  # --- Group tests ---
+
+  test "group finishes when all steps finish" do
+    {:ok, pid} =
+      Crank.new()
+      |> Crank.group("g", [Step.new("s1", "echo a"), Step.new("s2", "echo b")])
+      |> run_pipeline()
+
+    events = collect_events(pid)
+    assert Enum.any?(events, &match?({:group_started, ^pid, %{name: "g"}}, &1))
+    assert Enum.any?(events, &match?({:group_finished, ^pid, %{name: "g"}}, &1))
+    assert Enum.any?(events, &match?({:pipeline_finished, ^pid, _}, &1))
+  end
+
+  test "steps in group have group_id in event data" do
+    pipeline =
+      Crank.new()
+      |> Crank.group("g", [Step.new("s1", "echo a")])
+
+    [group] = pipeline.items
+    {:ok, pid} = run_pipeline(pipeline)
+    events = collect_events(pid)
+
+    step_events = for {:step_started, ^pid, data} <- events, do: data
+    assert Enum.all?(step_events, &(&1.group_id == group.id))
+  end
+
+  test "group ctx_add values are merged into ctx for the next step" do
+    test_pid = self()
+
+    {:ok, pid} =
+      Crank.new()
+      |> Crank.group("g", [
+        Step.new("s1", fn _ctx, _opts -> {:ctx_add, %{a: 1}} end),
+        Step.new("s2", fn _ctx, _opts -> {:ctx_add, %{b: 2}} end)
+      ])
+      |> Pipeline.add(Step.new("check", fn ctx, _opts -> send(test_pid, {:ctx, ctx}) end))
+      |> run_pipeline()
+
+    assert_receive {:ctx, ctx}
+    assert ctx.a == 1
+    assert ctx.b == 2
+    assert {:ok, _} = await_pipeline(pid)
+  end
+
+  test "group fails if any step fails" do
+    {:ok, pid} =
+      Crank.new()
+      |> Crank.group("g", [Step.new("s1", "echo ok"), Step.new("s2", "exit 1")])
+      |> run_pipeline()
+
+    events = collect_events(pid)
+    assert Enum.any?(events, &match?({:group_failed, ^pid, %{name: "g"}}, &1))
+    assert Enum.any?(events, &match?({:pipeline_failed, ^pid, _}, &1))
+  end
+
+  test "group fails if a step returns ctx_set" do
+    {:ok, pid} =
+      Crank.new()
+      |> Crank.group("g", [Step.new("s1", fn _ctx, _opts -> {:ctx_set, %{x: 1}} end)])
+      |> run_pipeline()
+
+    events = collect_events(pid)
+    assert Enum.any?(events, &match?({:group_failed, ^pid, _}, &1))
+  end
+
+  test "group fails if two steps return the same ctx_add key" do
+    {:ok, pid} =
+      Crank.new()
+      |> Crank.group("g", [
+        Step.new("s1", fn _ctx, _opts -> {:ctx_add, %{key: 1}} end),
+        Step.new("s2", fn _ctx, _opts -> {:ctx_add, %{key: 2}} end)
+      ])
+      |> run_pipeline()
+
+    events = collect_events(pid)
+    assert Enum.any?(events, &match?({:group_failed, ^pid, _}, &1))
+  end
+
+  test "group ctx_add key conflicts with existing pipeline ctx fails the pipeline" do
+    {:ok, pid} =
+      Crank.new(%{key: :original})
+      |> Crank.group("g", [Step.new("s1", fn _ctx, _opts -> {:ctx_add, %{key: :new}} end)])
+      |> run_pipeline()
+
+    assert {:error, _} = await_pipeline(pid)
   end
 end
