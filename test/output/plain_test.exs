@@ -2,32 +2,33 @@ defmodule Crank.Output.PlainTest do
   use ExUnit.Case, async: true
   import ExUnit.CaptureIO
   alias Crank.Output.Plain
+  alias Crank.Output.Utils
 
   describe "format_duration/1" do
     test "milliseconds under 1s" do
-      assert Plain.format_duration(0) == "0ms"
-      assert Plain.format_duration(30) == "30ms"
-      assert Plain.format_duration(999) == "999ms"
+      assert Utils.format_duration(0) == "0ms"
+      assert Utils.format_duration(30) == "30ms"
+      assert Utils.format_duration(999) == "999ms"
     end
 
     test "seconds under 1m" do
-      assert Plain.format_duration(1000) == "1s"
-      assert Plain.format_duration(200) == "200ms"
-      assert Plain.format_duration(1200) == "1.2s"
-      assert Plain.format_duration(530) == "530ms"
-      assert Plain.format_duration(1530) == "1.53s"
-      assert Plain.format_duration(59_990) == "59.99s"
+      assert Utils.format_duration(1000) == "1s"
+      assert Utils.format_duration(200) == "200ms"
+      assert Utils.format_duration(1200) == "1.2s"
+      assert Utils.format_duration(530) == "530ms"
+      assert Utils.format_duration(1530) == "1.53s"
+      assert Utils.format_duration(59_990) == "59.99s"
     end
 
     test "minutes under 1h" do
-      assert Plain.format_duration(60_000) == "1m0s"
-      assert Plain.format_duration(106_000) == "1m46s"
-      assert Plain.format_duration(3_599_000) == "59m59s"
+      assert Utils.format_duration(60_000) == "1m0s"
+      assert Utils.format_duration(106_000) == "1m46s"
+      assert Utils.format_duration(3_599_000) == "59m59s"
     end
 
     test "hours" do
-      assert Plain.format_duration(3_600_000) == "1h0m"
-      assert Plain.format_duration(4_320_000) == "1h12m"
+      assert Utils.format_duration(3_600_000) == "1h0m"
+      assert Utils.format_duration(4_320_000) == "1h12m"
     end
   end
 
@@ -101,7 +102,7 @@ defmodule Crank.Output.PlainTest do
       ])
 
     assert output =~ "- error compile (500ms, exit code: 1)\n"
-    assert output =~ "    mix compile\n"
+    assert output =~ "    - `mix compile`\n"
     assert output =~ "    stderr:\n"
     assert output =~ "    error on line 5\n"
     refute output =~ "stdout:"
@@ -236,7 +237,7 @@ defmodule Crank.Output.PlainTest do
 
     assert output =~ "  - ok credo (1s)\n"
     assert output =~ "  - error dialyzer (5s, exit code: 1)\n"
-    assert output =~ "      mix dialyzer\n"
+    assert output =~ "      - `mix dialyzer`\n"
     assert output =~ "      stderr:\n"
     assert output =~ "      Type error\n"
     assert output =~ "- error checks (5s)\n"

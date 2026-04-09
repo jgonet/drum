@@ -15,7 +15,7 @@ defmodule Crank.Pipeline.Server do
       cd: pipeline.cd
     }
 
-    event_data = %{now_ms: Utils.now_ms()}
+    event_data = %{now_ms: Utils.now_ms(), items: summarize_items(pipeline.items)}
     Output.Server.emit({:pipeline_started, pipeline.id, event_data})
     {:ok, state, {:continue, :run_next}}
   end
@@ -82,6 +82,10 @@ defmodule Crank.Pipeline.Server do
     event_data = %{id: group.id, name: group.name, now_ms: Utils.now_ms()}
     Output.Server.emit({:group_skipped, state.pipeline_id, event_data})
   end
+
+  defp summarize_items(items), do: Enum.map(items, &summarize_item/1)
+  defp summarize_item(%Step{} = s), do: %{type: :step, id: s.id, name: s.name}
+  defp summarize_item(%Group{} = g), do: %{type: :group, id: g.id, name: g.name, steps: summarize_items(g.steps)}
 
   defp apply_ctx_op(ctx, nil), do: {:ok, ctx}
   defp apply_ctx_op(ctx, {:ctx_set, new_ctx}) when is_map(new_ctx) do
