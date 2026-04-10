@@ -7,9 +7,13 @@ defmodule Crank.Output.Plain do
   def init(opts) do
     %{
       pipeline_start_ms: nil,
+      pipeline_start_time: nil,
       step_starts: %{},
       group_starts: %{},
+      group_totals: %{},
+      group_done: %{},
       cmd_buffers: %{},
+      cmd_seq: 0,
       successful_steps: 0,
       skipped_steps: 0,
       failed_step: nil,
@@ -21,31 +25,29 @@ defmodule Crank.Output.Plain do
   @impl true
   def handle_event({:pipeline_started, _, data}, state) do
     %{now_ms: now_ms} = data
-    {_date, {h, m, _s}} = :calendar.local_time()
-    state.print.("Start (#{Utils.pad2(h)}:#{Utils.pad2(m)})")
-    %{state | pipeline_start_ms: now_ms}
+    start_time = utc_timestamp()
+    state.print.("Start (#{start_time})")
+    %{state | pipeline_start_ms: now_ms, pipeline_start_time: start_time}
   end
 
   def handle_event({:step_started, _, data}, state) do
     %{id: id, name: name, group_id: group_id, now_ms: now_ms} = data
-    state.print.("#{step_prefix(group_id)}start #{name}")
-
-    %{
-      state
-      | step_starts: Map.put(state.step_starts, id, now_ms)
-    }
+    state.print.("#{step_prefix(group_id)}>> #{name}")
+    %{state | step_starts: Map.put(state.step_starts, id, now_ms)}
   end
 
   def handle_event({:step_finished, _, data}, state) do
     %{id: id, name: name, group_id: group_id, now_ms: now_ms} = data
     elapsed = now_ms - Map.fetch!(state.step_starts, id)
-    state.print.("#{step_prefix(group_id)}ok #{name} (#{Utils.format_duration(elapsed)})")
+    state.print.("#{step_prefix(group_id)}ok #{name}  #{Utils.format_duration(elapsed)}")
 
-    %{
+    state = %{
       state
       | cmd_buffers: drop_step_buffers(state.cmd_buffers, id),
         successful_steps: state.successful_steps + 1
     }
+
+    inc_group_done(state, group_id)
   end
 
   def handle_event({:step_failed, _, data}, state) do
@@ -53,50 +55,66 @@ defmodule Crank.Output.Plain do
     elapsed = now_ms - Map.get(state.step_starts, id, now_ms)
 
     state.print.(
-      "#{step_prefix(group_id)}error #{name} (#{Utils.format_duration(elapsed)}, #{format_step_reason(reason)})"
+      "#{step_prefix(group_id)}FAIL #{name}  #{Utils.format_duration(elapsed)}  (#{format_step_reason(reason)})"
     )
 
     flush_detail_block(id, group_id, state.cmd_buffers, state.print)
 
-    %{state | cmd_buffers: drop_step_buffers(state.cmd_buffers, id), failed_step: name, failed_step_elapsed: elapsed}
+    state = %{
+      state
+      | cmd_buffers: drop_step_buffers(state.cmd_buffers, id),
+        failed_step: name,
+        failed_step_elapsed: elapsed
+    }
+
+    inc_group_done(state, group_id)
   end
 
   def handle_event({:step_skipped, _, data}, state) do
     %{name: name, group_id: group_id} = data
-    state.print.("#{step_prefix(group_id)}skipped #{name}")
-    %{state | skipped_steps: state.skipped_steps + 1}
+    state.print.("#{step_prefix(group_id)}skip #{name}")
+    state = %{state | skipped_steps: state.skipped_steps + 1}
+    inc_group_done(state, group_id)
   end
 
   def handle_event({:group_started, _, data}, state) do
     %{id: id, name: name, step_count: step_count, now_ms: now_ms} = data
-    state.print.("- start #{name} (#{step_count} #{Utils.pluralize(step_count, "step")})")
-    %{state | group_starts: Map.put(state.group_starts, id, now_ms)}
+    state.print.(">> #{name} (#{step_count} #{Utils.pluralize(step_count, "step")})")
+
+    %{
+      state
+      | group_starts: Map.put(state.group_starts, id, now_ms),
+        group_totals: Map.put(state.group_totals, id, step_count),
+        group_done: Map.put(state.group_done, id, 0)
+    }
   end
 
   def handle_event({:group_finished, _, data}, state) do
     %{id: id, name: name, now_ms: now_ms} = data
     elapsed = now_ms - Map.fetch!(state.group_starts, id)
-    state.print.("- ok #{name} (#{Utils.format_duration(elapsed)})")
+    {done, total} = group_count(state, id)
+    state.print.("ok #{name} (#{done}/#{total})  #{Utils.format_duration(elapsed)}")
     %{state | group_starts: Map.delete(state.group_starts, id)}
   end
 
   def handle_event({:group_failed, _, data}, state) do
     %{id: id, name: name, now_ms: now_ms} = data
     elapsed = now_ms - Map.get(state.group_starts, id, now_ms)
-    state.print.("- error #{name} (#{Utils.format_duration(elapsed)})")
+    {done, total} = group_count(state, id)
+    state.print.("FAIL #{name} (#{done}/#{total})  #{Utils.format_duration(elapsed)}")
     %{state | group_starts: Map.delete(state.group_starts, id)}
   end
 
   def handle_event({:group_skipped, _, data}, state) do
     %{name: name} = data
-    state.print.("- skipped #{name}")
+    state.print.("skip #{name}")
     state
   end
 
   def handle_event({:command_started, _, data}, state) do
     %{id: id, cmd: cmd, step_id: step_id} = data
-    buf = %{cmd: cmd, stderr: [], stdout: [], step_id: step_id, exit_code: nil}
-    %{state | cmd_buffers: Map.put(state.cmd_buffers, id, buf)}
+    buf = %{cmd: cmd, stderr: [], stdout: [], step_id: step_id, exit_code: nil, seq: state.cmd_seq}
+    %{state | cmd_buffers: Map.put(state.cmd_buffers, id, buf), cmd_seq: state.cmd_seq + 1}
   end
 
   def handle_event({:command_stdout, _, data}, state) do
@@ -121,11 +139,13 @@ defmodule Crank.Output.Plain do
     elapsed = elapsed_since(state.pipeline_start_ms, now_ms)
 
     parts = [
-      "#{state.successful_steps} successful #{Utils.pluralize(state.successful_steps, "step")}",
-      if(state.skipped_steps > 0, do: "#{state.skipped_steps} skipped", else: nil)
+      "#{state.successful_steps} ok, #{state.skipped_steps} skipped",
+      "started #{state.pipeline_start_time}",
+      "#{Utils.format_duration(elapsed)} total"
     ]
 
-    state.print.("#{Utils.format_parts(parts)} (#{Utils.format_duration(elapsed)})")
+    state.print.("")
+    state.print.("OK: " <> Enum.join(parts, " | "))
     state
   end
 
@@ -133,50 +153,65 @@ defmodule Crank.Output.Plain do
     %{now_ms: now_ms} = data
     elapsed = elapsed_since(state.pipeline_start_ms, now_ms)
 
-    failed_part =
-      case {state.failed_step, state.failed_step_elapsed} do
-        {nil, _} -> "failed"
-        {name, nil} -> "failed #{name}"
-        {name, step_elapsed} -> "failed #{name} in #{Utils.format_duration(step_elapsed)}"
+    failed_label =
+      case state.failed_step do
+        nil -> "failed"
+        name -> "failed #{name}"
       end
 
     parts = [
-      "#{state.successful_steps} successful #{Utils.pluralize(state.successful_steps, "step")}",
-      if(state.skipped_steps > 0, do: "#{state.skipped_steps} skipped", else: nil),
-      failed_part
+      failed_label,
+      "#{state.successful_steps} ok, #{state.skipped_steps} skipped",
+      "started #{state.pipeline_start_time}",
+      "#{Utils.format_duration(elapsed)} total"
     ]
 
-    state.print.("#{Utils.format_parts(parts)} (#{Utils.format_duration(elapsed)} total)")
+    state.print.("")
+    state.print.("FAIL: " <> Enum.join(parts, " | "))
     state
   end
 
   def handle_event(_event, state), do: state
 
-  defp step_prefix(nil), do: "- "
-  defp step_prefix(_group_id), do: "  - "
-
-  defp detail_prefix(nil), do: "    "
-  defp detail_prefix(_group_id), do: "      "
+  defp step_prefix(nil), do: ""
+  defp step_prefix(_group_id), do: "  "
 
   defp flush_detail_block(step_id, group_id, cmd_buffers, print) do
-    prefix = detail_prefix(group_id)
+    cmd_prefix = if group_id, do: "    ", else: "  "
+    out_prefix = cmd_prefix <> "  "
 
     cmd_buffers
     |> Map.values()
     |> Enum.filter(&(&1.step_id == step_id))
+    |> Enum.sort_by(& &1.seq)
     |> Enum.each(fn buf ->
-      print.("#{prefix}- `#{buf.cmd}`")
+      exit_suffix = if buf.exit_code, do: "  [exit #{buf.exit_code}]", else: ""
+      print.("#{cmd_prefix}$ #{buf.cmd}#{exit_suffix}")
 
-      if buf.stderr != [] do
-        print.("#{prefix}stderr:")
-        buf.stderr |> Enum.reverse() |> Enum.each(&IO.write("#{prefix}#{&1}"))
-      end
-
-      if buf.stdout != [] do
-        print.("#{prefix}stdout:")
-        buf.stdout |> Enum.reverse() |> Enum.each(&IO.write("#{prefix}#{&1}"))
-      end
+      [buf.stderr, buf.stdout]
+      |> Enum.each(fn chunks ->
+        chunks
+        |> Enum.reverse()
+        |> Enum.each(fn chunk ->
+          chunk
+          |> String.trim_trailing("\n")
+          |> String.split("\n")
+          |> Enum.each(&IO.write("#{out_prefix}#{&1}\n"))
+        end)
+      end)
     end)
+  end
+
+  defp group_count(state, group_id) do
+    total = Map.get(state.group_totals, group_id, "?")
+    done = Map.get(state.group_done, group_id, total)
+    {done, total}
+  end
+
+  defp inc_group_done(state, nil), do: state
+
+  defp inc_group_done(state, group_id) do
+    %{state | group_done: Map.update(state.group_done, group_id, 1, &(&1 + 1))}
   end
 
   defp drop_step_buffers(cmd_buffers, step_id) do
@@ -193,11 +228,15 @@ defmodule Crank.Output.Plain do
   defp elapsed_since(nil, now_ms), do: now_ms
   defp elapsed_since(start_ms, now_ms), do: now_ms - start_ms
 
+  defp utc_timestamp do
+    {{year, month, day}, {h, m, s}} = :calendar.universal_time()
+    "#{year}-#{Utils.pad2(month)}-#{Utils.pad2(day)}T#{Utils.pad2(h)}:#{Utils.pad2(m)}:#{Utils.pad2(s)}Z"
+  end
+
   defp format_step_reason({:action_error, %Crank.CommandError{exit_code: code}}),
     do: "exit code: #{code}"
 
   defp format_step_reason(:timeout), do: "timeout"
   defp format_step_reason({:action_error, _e}), do: "exception"
   defp format_step_reason(_), do: "failed"
-
 end

@@ -63,10 +63,10 @@ defmodule Crank.Output.PlainTest do
         {:pipeline_finished, ids.pipeline, %{now_ms: t1}}
       ])
 
-    assert output =~ ~r/^Start \(\d{2}:\d{2}\)/m
-    assert output =~ "- start compile\n"
-    assert output =~ "- ok compile (230ms)\n"
-    assert output =~ "1 successful step (230ms)\n"
+    assert output =~ ~r/^Start \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\)/m
+    assert output =~ ">> compile\n"
+    assert output =~ "ok compile  230ms\n"
+    assert output =~ ~r/OK: 1 ok, 0 skipped \| started \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z \| 230ms total/
     refute output =~ "Compiled ok"
   end
 
@@ -101,12 +101,11 @@ defmodule Crank.Output.PlainTest do
          }}
       ])
 
-    assert output =~ "- error compile (500ms, exit code: 1)\n"
-    assert output =~ "    - `mix compile`\n"
-    assert output =~ "    stderr:\n"
+    assert output =~ "FAIL compile  500ms  (exit code: 1)\n"
+    assert output =~ "  $ mix compile  [exit 1]\n"
     assert output =~ "    error on line 5\n"
     refute output =~ "stdout:"
-    assert output =~ "0 successful steps, failed compile in 500ms (500ms total)\n"
+    assert output =~ ~r/FAIL: failed compile \| 0 ok, 0 skipped \| started \S+ \| 500ms total/
   end
 
   test "failure: timeout reason" do
@@ -123,8 +122,8 @@ defmodule Crank.Output.PlainTest do
         {:pipeline_failed, ids.pipeline, %{reason: :timeout, now_ms: t1}}
       ])
 
-    assert output =~ "- error slow (30s, timeout)\n"
-    assert output =~ "0 successful steps, failed slow in 30s (30s total)\n"
+    assert output =~ "FAIL slow  30s  (timeout)\n"
+    assert output =~ ~r/FAIL: failed slow \| 0 ok, 0 skipped \| started \S+ \| 30s total/
   end
 
   test "failure: exception in action fn" do
@@ -148,7 +147,7 @@ defmodule Crank.Output.PlainTest do
          %{reason: {:action_error, %RuntimeError{message: "oops"}}, now_ms: t1}}
       ])
 
-    assert output =~ "- error boom (100ms, exception)\n"
+    assert output =~ "FAIL boom  100ms  (exception)\n"
   end
 
   test "skipped step: shown in output and summary count" do
@@ -165,8 +164,8 @@ defmodule Crank.Output.PlainTest do
         {:pipeline_finished, ids.pipeline, %{now_ms: t1}}
       ])
 
-    assert output =~ "- skipped lint\n"
-    assert output =~ "1 successful step, 1 skipped (50ms)\n"
+    assert output =~ "skip lint\n"
+    assert output =~ ~r/OK: 1 ok, 1 skipped \| started \S+ \| 50ms total/
   end
 
   test "group: header with step count, indented steps, ok summary" do
@@ -192,13 +191,13 @@ defmodule Crank.Output.PlainTest do
         {:pipeline_finished, ids.pipeline, %{now_ms: t1}}
       ])
 
-    assert output =~ "- start checks (2 steps)\n"
-    assert output =~ "  - start credo\n"
-    assert output =~ "  - start dialyzer\n"
-    assert output =~ "  - ok credo (1s)\n"
-    assert output =~ "  - ok dialyzer (2s)\n"
-    assert output =~ "- ok checks (2s)\n"
-    assert output =~ "2 successful steps (2s)\n"
+    assert output =~ ">> checks (2 steps)\n"
+    assert output =~ "  >> credo\n"
+    assert output =~ "  >> dialyzer\n"
+    assert output =~ "  ok credo  1s\n"
+    assert output =~ "  ok dialyzer  2s\n"
+    assert output =~ "ok checks (2/2)  2s\n"
+    assert output =~ ~r/OK: 2 ok, 0 skipped \| started \S+ \| 2s total/
   end
 
   test "group failure: detail block indented, group error line, summary" do
@@ -235,12 +234,11 @@ defmodule Crank.Output.PlainTest do
         {:pipeline_failed, ids.pipeline, %{reason: :propagated, now_ms: t2}}
       ])
 
-    assert output =~ "  - ok credo (1s)\n"
-    assert output =~ "  - error dialyzer (5s, exit code: 1)\n"
-    assert output =~ "      - `mix dialyzer`\n"
-    assert output =~ "      stderr:\n"
+    assert output =~ "  ok credo  1s\n"
+    assert output =~ "  FAIL dialyzer  5s  (exit code: 1)\n"
+    assert output =~ "    $ mix dialyzer  [exit 1]\n"
     assert output =~ "      Type error\n"
-    assert output =~ "- error checks (5s)\n"
-    assert output =~ "1 successful step, failed dialyzer in 5s (5s total)\n"
+    assert output =~ "FAIL checks (2/2)  5s\n"
+    assert output =~ ~r/FAIL: failed dialyzer \| 1 ok, 0 skipped \| started \S+ \| 5s total/
   end
 end
