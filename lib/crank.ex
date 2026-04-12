@@ -1,7 +1,7 @@
 defmodule Crank do
   @moduledoc """
   """
-  alias Crank.{Pipeline, Command, Group}
+  alias Crank.{Pipeline, Command, Group, Step}
 
   defmacro script_dir do
     __CALLER__.file |> Path.dirname() |> Path.expand()
@@ -19,8 +19,46 @@ defmodule Crank do
 
   def run(%Pipeline{} = pipeline), do: Pipeline.start_pipeline(pipeline)
 
-  def group(%Pipeline{} = pipeline, name, steps, opts \\ []) when is_list(steps) do
-    Pipeline.add(pipeline, Group.new(name, steps, opts))
+  def step(name, action), do: Step.new(name, action, [])
+
+  def step(%Pipeline{} = pipeline, name, action) do
+    Pipeline.add(pipeline, step(name, action))
+  end
+
+  def step(%Group{} = group, name, action) do
+    Group.add(group, step(name, action))
+  end
+
+  def step(name, action, opts), do: Step.new(name, action, opts)
+
+  def step(%Pipeline{} = pipeline, name, action, opts) do
+    Pipeline.add(pipeline, step(name, action, opts))
+  end
+
+  def step(%Group{} = group, name, action, opts) do
+    Group.add(group, step(name, action, opts))
+  end
+
+  def group(name), do: Group.new(name, [], [])
+
+  def group(%Pipeline{} = pipeline, %Group{} = group), do: Pipeline.add(pipeline, group)
+
+  def group(name, items) when is_list(items) do
+    if Keyword.keyword?(items) do
+      Group.new(name, [], items)
+    else
+      Group.new(name, items, [])
+    end
+  end
+
+  def group(%Pipeline{} = pipeline, name, steps) when is_list(steps) do
+    Pipeline.add(pipeline, group(name, steps))
+  end
+
+  def group(name, steps, opts) when is_list(steps), do: Group.new(name, steps, opts)
+
+  def group(%Pipeline{} = pipeline, name, steps, opts) when is_list(steps) do
+    Pipeline.add(pipeline, group(name, steps, opts))
   end
 
   def tmp_dir!(run_opts, mode) when mode in [:transient] do

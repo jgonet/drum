@@ -12,4 +12,8 @@ defmodule Crank.Group do
       if: opts[:if]
     }
   end
+
+  def add(%__MODULE__{} = group, %Crank.Step{} = step) do
+    %{group | steps: group.steps ++ [step]}
+  end
 end
