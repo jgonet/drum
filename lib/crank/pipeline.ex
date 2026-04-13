@@ -10,8 +10,9 @@ defmodule Crank.Pipeline do
     %{pipeline | items: pipeline.items ++ [item]}
   end
 
-  def start_pipeline(%__MODULE__{} = pipeline) do
-    child_spec = {Crank.Pipeline.Supervisor, pipeline}
+  def start_pipeline(%__MODULE__{} = pipeline, opts \\ []) when is_list(opts) do
+    owner = Keyword.get(opts, :owner, self())
+    child_spec = {Crank.Pipeline.Supervisor, %{pipeline: pipeline, owner: owner}}
     {:ok, _} = DynamicSupervisor.start_child(Crank.PipelinesSup, child_spec)
     {:ok, pipeline.id}
   end

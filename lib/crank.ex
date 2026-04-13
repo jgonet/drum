@@ -1,7 +1,7 @@
 defmodule Crank do
   @moduledoc """
   """
-  alias Crank.{Pipeline, Command, Group, Step}
+  alias Crank.{Command, Group, Pipeline, Registry, Step, Utils}
 
   defmacro script_dir do
     __CALLER__.file |> Path.dirname() |> Path.expand()
@@ -17,7 +17,28 @@ defmodule Crank do
     Dotenvy.source!(sources, require_files: true, side_effect: nil)
   end
 
-  def run(%Pipeline{} = pipeline), do: Pipeline.start_pipeline(pipeline)
+  def run(%Pipeline{} = pipeline), do: Pipeline.start_pipeline(pipeline, owner: self())
+
+  def await(pipeline_id_or_ids, timeout \\ 5_000)
+
+  def await(pipeline_ids, timeout) when is_list(pipeline_ids) do
+    await_many(pipeline_ids, timeout)
+  end
+
+  def await(pipeline_id, :infinity) when is_reference(pipeline_id) do
+    receive_pipeline_result(pipeline_id, :infinity)
+  end
+
+  def await(pipeline_id, timeout) when is_reference(pipeline_id) do
+    receive_pipeline_result(pipeline_id, timeout)
+  end
+
+  def stop(pipeline_id, :graceful) when is_reference(pipeline_id) do
+    case pipeline_stop(pipeline_id) do
+      :ok -> :ok
+      {:error, :noproc} -> :ok
+    end
+  end
 
   def step(name, action), do: Step.new(name, action, [])
 
@@ -99,6 +120,53 @@ defmodule Crank do
 
       {:error, reason} ->
         raise "command failed to start: #{inspect(reason)}"
+    end
+  end
+
+  defp await_many(pipeline_ids, :infinity) do
+    Enum.map(pipeline_ids, &await(&1, :infinity))
+  end
+
+  defp await_many(pipeline_ids, timeout) when is_integer(timeout) and timeout >= 0 do
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    pipeline_ids
+    |> Utils.reduce_ok([], fn pipeline_id, acc ->
+      remaining = deadline - System.monotonic_time(:millisecond)
+
+      if remaining < 0 do
+        {:error, :timeout}
+      else
+        case await(pipeline_id, remaining) do
+          {:error, :timeout} -> {:error, :timeout}
+          result -> {:ok, [result | acc]}
+        end
+      end
+    end)
+    |> case do
+      {:ok, values} -> Enum.reverse(values)
+      {:error, :timeout} = error -> error
+    end
+  end
+
+  defp pipeline_stop(pipeline_id) do
+    GenServer.call(Registry.pipeline(pipeline_id), {:stop, :graceful})
+  catch
+    :exit, _reason -> {:error, :noproc}
+  end
+
+  defp receive_pipeline_result(pipeline_id, :infinity) do
+    receive do
+      {:crank_pipeline_result, ^pipeline_id, result} -> result
+    end
+  end
+
+  defp receive_pipeline_result(pipeline_id, timeout)
+       when is_integer(timeout) and timeout >= 0 do
+    receive do
+      {:crank_pipeline_result, ^pipeline_id, result} -> result
+    after
+      timeout -> {:error, :timeout}
     end
   end
 end

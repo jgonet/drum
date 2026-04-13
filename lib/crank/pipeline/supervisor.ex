@@ -1,17 +1,19 @@
 defmodule Crank.Pipeline.Supervisor do
   use Supervisor, restart: :temporary
 
-  def start_link(%Crank.Pipeline{} = pipeline) do
-    Supervisor.start_link(__MODULE__, pipeline)
+  def start_link(%{pipeline: %Crank.Pipeline{}} = args) do
+    Supervisor.start_link(__MODULE__, args)
   end
 
   @impl true
-  def init(%Crank.Pipeline{} = pipeline) do
+  def init(%{pipeline: %Crank.Pipeline{} = pipeline} = args) do
     worker_sup = Crank.Registry.worker_sup(pipeline.id)
+    owner = Map.fetch!(args, :owner)
 
     pipeline_server_args = %{
       pipeline: pipeline,
-      name: Crank.Registry.pipeline(pipeline.id)
+      name: Crank.Registry.pipeline(pipeline.id),
+      owner: owner
     }
 
     children = [

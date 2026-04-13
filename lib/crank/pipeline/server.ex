@@ -7,7 +7,7 @@ defmodule Crank.Pipeline.Server do
   end
 
   @impl true
-  def init(%{pipeline: pipeline}) do
+  def init(%{pipeline: pipeline} = args) do
     run_opts = %{
       worker_sup: Registry.worker_sup(pipeline.id),
       pipeline_id: pipeline.id,
@@ -15,12 +15,16 @@ defmodule Crank.Pipeline.Server do
     }
 
     effective_cd = Utils.resolve_cd(pipeline.cd, pipeline.ctx, run_opts)
+    owner = Map.fetch!(args, :owner)
+    owner_ref = Process.monitor(owner)
 
     state = %{
       items: pipeline.items,
       pipeline_id: pipeline.id,
       ctx: pipeline.ctx,
-      cd: effective_cd
+      cd: effective_cd,
+      owner: owner,
+      owner_ref: owner_ref
     }
 
     event_data = %{now_ms: Utils.now_ms(), items: summarize_items(pipeline.items)}
@@ -30,6 +34,7 @@ defmodule Crank.Pipeline.Server do
 
   @impl true
   def handle_continue(:run_next, %{items: []} = state) do
+    notify_owner(state, {:ok, state.ctx})
     event_data = %{now_ms: Utils.now_ms()}
     Output.Server.emit({:pipeline_finished, state.pipeline_id, event_data})
     {:stop, :normal, state}
@@ -52,18 +57,36 @@ defmodule Crank.Pipeline.Server do
         {:noreply, %{state | ctx: new_ctx}, {:continue, :run_next}}
 
       {:error, reason} ->
-        event_data = %{reason: reason, now_ms: Utils.now_ms()}
-        Output.Server.emit({:pipeline_failed, state.pipeline_id, event_data})
-        {:stop, {:shutdown, :ctx_conflict}, state}
+        stop_pipeline(state, reason, {:shutdown, :ctx_conflict})
     end
   end
 
   @impl true
   def handle_cast({:step_done, _id, {:error, reason}, _ctx_op}, state) do
+    stop_pipeline(state, reason, {:shutdown, :step_failed})
+  end
+
+  @impl true
+  def handle_call({:stop, :graceful}, _from, state) do
+    reason = {:stopped, :graceful}
+    notify_owner(state, {:error, reason, state.ctx})
+
     event_data = %{reason: reason, now_ms: Utils.now_ms()}
     Output.Server.emit({:pipeline_failed, state.pipeline_id, event_data})
 
-    {:stop, {:shutdown, :step_failed}, state}
+    {:stop, {:shutdown, :stopped}, :ok, state}
+  end
+
+  @impl true
+  def handle_info(
+        {:DOWN, owner_ref, :process, _pid, reason},
+        %{owner_ref: owner_ref} = state
+      ) do
+    stop_reason = {:stopped, {:owner_down, reason}}
+    event_data = %{reason: stop_reason, now_ms: Utils.now_ms()}
+    Output.Server.emit({:pipeline_failed, state.pipeline_id, event_data})
+
+    {:stop, {:shutdown, :owner_down}, state}
   end
 
   defp start_item(%Step{} = step, rest, state) do
@@ -133,5 +156,18 @@ defmodule Crank.Pipeline.Server do
       [] -> {:ok, Map.merge(ctx, additions)}
       _ -> {:error, {:ctx_conflict, conflicts}}
     end
+  end
+
+  defp stop_pipeline(state, reason, shutdown_reason) do
+    notify_owner(state, {:error, reason, state.ctx})
+
+    event_data = %{reason: reason, now_ms: Utils.now_ms()}
+    Output.Server.emit({:pipeline_failed, state.pipeline_id, event_data})
+
+    {:stop, shutdown_reason, state}
+  end
+
+  defp notify_owner(state, result) do
+    send(state.owner, {:crank_pipeline_result, state.pipeline_id, result})
   end
 end
