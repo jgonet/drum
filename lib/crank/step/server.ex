@@ -10,7 +10,15 @@ defmodule Crank.Step.Server do
   def init(%{step: step, pipeline_id: pipeline_id, ctx: ctx} = args) do
     group_id = Map.get(args, :group_id)
     parent_cd = Map.get(args, :parent_cd)
-    run_opts = %{worker_sup: Registry.worker_sup(pipeline_id), pipeline_id: pipeline_id, step_id: step.id, cd: parent_cd}
+
+    run_opts = %{
+      worker_sup: Registry.worker_sup(pipeline_id),
+      pipeline_id: pipeline_id,
+      step_id: step.id,
+      cd: parent_cd,
+      group_id: group_id
+    }
+
     effective_cd = Utils.resolve_cd(step.cd, ctx, run_opts) || parent_cd
 
     state = %{
@@ -26,7 +34,14 @@ defmodule Crank.Step.Server do
       timer_ref: nil
     }
 
-    event_data = %{id: step.id, name: step.name, pipeline_id: pipeline_id, group_id: group_id, now_ms: Utils.now_ms()}
+    event_data = %{
+      id: step.id,
+      name: step.name,
+      pipeline_id: pipeline_id,
+      group_id: group_id,
+      now_ms: Utils.now_ms()
+    }
+
     Output.Server.emit({:step_started, pipeline_id, event_data})
     {:ok, state, {:continue, :run}}
   end
@@ -39,7 +54,8 @@ defmodule Crank.Step.Server do
       worker_sup: Registry.worker_sup(state.pipeline_id),
       pipeline_id: state.pipeline_id,
       step_id: state.id,
-      cd: state.cd
+      cd: state.cd,
+      group_id: state.group_id
     }
 
     spawn_pid =

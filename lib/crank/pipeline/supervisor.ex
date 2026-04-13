@@ -14,11 +14,8 @@ defmodule Crank.Pipeline.Supervisor do
       name: Crank.Registry.pipeline(pipeline.id)
     }
 
-    tmp_dir_args = %{pipeline_id: pipeline.id, name: Crank.Registry.tmp_dir(pipeline.id)}
-
     children = [
       {DynamicSupervisor, name: worker_sup, strategy: :one_for_one},
-      {Crank.TmpDir.Server, tmp_dir_args},
       Supervisor.child_spec({Crank.Pipeline.Server, pipeline_server_args}, significant: true)
     ]
 

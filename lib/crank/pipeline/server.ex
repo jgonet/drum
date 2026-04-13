@@ -8,7 +8,12 @@ defmodule Crank.Pipeline.Server do
 
   @impl true
   def init(%{pipeline: pipeline}) do
-    run_opts = %{worker_sup: Registry.worker_sup(pipeline.id), pipeline_id: pipeline.id, cd: nil}
+    run_opts = %{
+      worker_sup: Registry.worker_sup(pipeline.id),
+      pipeline_id: pipeline.id,
+      cd: nil
+    }
+
     effective_cd = Utils.resolve_cd(pipeline.cd, pipeline.ctx, run_opts)
 
     state = %{
@@ -25,7 +30,6 @@ defmodule Crank.Pipeline.Server do
 
   @impl true
   def handle_continue(:run_next, %{items: []} = state) do
-    Crank.TmpDir.Server.cleanup(state.pipeline_id)
     event_data = %{now_ms: Utils.now_ms()}
     Output.Server.emit({:pipeline_finished, state.pipeline_id, event_data})
     {:stop, :normal, state}
@@ -48,7 +52,6 @@ defmodule Crank.Pipeline.Server do
         {:noreply, %{state | ctx: new_ctx}, {:continue, :run_next}}
 
       {:error, reason} ->
-        Crank.TmpDir.Server.cleanup(state.pipeline_id)
         event_data = %{reason: reason, now_ms: Utils.now_ms()}
         Output.Server.emit({:pipeline_failed, state.pipeline_id, event_data})
         {:stop, {:shutdown, :ctx_conflict}, state}
@@ -57,7 +60,6 @@ defmodule Crank.Pipeline.Server do
 
   @impl true
   def handle_cast({:step_done, _id, {:error, reason}, _ctx_op}, state) do
-    Crank.TmpDir.Server.cleanup(state.pipeline_id)
     event_data = %{reason: reason, now_ms: Utils.now_ms()}
     Output.Server.emit({:pipeline_failed, state.pipeline_id, event_data})
 
@@ -66,7 +68,14 @@ defmodule Crank.Pipeline.Server do
 
   defp start_item(%Step{} = step, rest, state) do
     worker_sup = Registry.worker_sup(state.pipeline_id)
-    step_server_args = %{step: step, pipeline_id: state.pipeline_id, ctx: state.ctx, parent_cd: state.cd}
+
+    step_server_args = %{
+      step: step,
+      pipeline_id: state.pipeline_id,
+      ctx: state.ctx,
+      parent_cd: state.cd
+    }
+
     {:ok, _} = DynamicSupervisor.start_child(worker_sup, {Crank.Step.Server, step_server_args})
     {:noreply, %{state | items: rest}}
   end
@@ -74,13 +83,28 @@ defmodule Crank.Pipeline.Server do
   defp start_item(%Group{} = group, rest, state) do
     worker_sup = Registry.worker_sup(state.pipeline_id)
     name = Registry.group(state.pipeline_id, group.id)
-    group_server_args = %{group: group, pipeline_id: state.pipeline_id, ctx: state.ctx, name: name, parent_cd: state.cd}
+
+    group_server_args = %{
+      group: group,
+      pipeline_id: state.pipeline_id,
+      ctx: state.ctx,
+      name: name,
+      parent_cd: state.cd
+    }
+
     {:ok, _} = DynamicSupervisor.start_child(worker_sup, {Crank.Group.Server, group_server_args})
     {:noreply, %{state | items: rest}}
   end
 
   defp emit_skipped(%Step{} = step, state) do
-    event_data = %{id: step.id, name: step.name, pipeline_id: state.pipeline_id, group_id: nil, now_ms: Utils.now_ms()}
+    event_data = %{
+      id: step.id,
+      name: step.name,
+      pipeline_id: state.pipeline_id,
+      group_id: nil,
+      now_ms: Utils.now_ms()
+    }
+
     Output.Server.emit({:step_skipped, state.pipeline_id, event_data})
   end
 
@@ -91,9 +115,13 @@ defmodule Crank.Pipeline.Server do
 
   defp summarize_items(items), do: Enum.map(items, &summarize_item/1)
   defp summarize_item(%Step{} = s), do: %{type: :step, id: s.id, name: s.name}
-  defp summarize_item(%Group{} = g), do: %{type: :group, id: g.id, name: g.name, steps: summarize_items(g.steps)}
+
+  defp summarize_item(%Group{} = g) do
+    %{type: :group, id: g.id, name: g.name, steps: summarize_items(g.steps)}
+  end
 
   defp apply_ctx_op(ctx, nil), do: {:ok, ctx}
+
   defp apply_ctx_op(ctx, {:ctx_set, new_ctx}) when is_map(new_ctx) do
     {:ok, Map.merge(new_ctx, Map.take(ctx, [:raw]))}
   end

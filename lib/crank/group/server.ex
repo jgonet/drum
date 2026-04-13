@@ -9,10 +9,18 @@ defmodule Crank.Group.Server do
   @impl true
   def init(%{group: group, pipeline_id: pipeline_id, ctx: ctx} = args) do
     parent_cd = Map.get(args, :parent_cd)
-    run_opts = %{worker_sup: Registry.worker_sup(pipeline_id), pipeline_id: pipeline_id, cd: parent_cd}
+
+    run_opts = %{
+      worker_sup: Registry.worker_sup(pipeline_id),
+      pipeline_id: pipeline_id,
+      cd: parent_cd,
+      group_id: group.id
+    }
+
     effective_cd = Utils.resolve_cd(group.cd, ctx, run_opts) || parent_cd
 
-    {steps_to_run, steps_to_skip} = Enum.split_with(group.steps, &Utils.eval_condition(Map.get(&1, :if), ctx))
+    {steps_to_run, steps_to_skip} =
+      Enum.split_with(group.steps, &Utils.eval_condition(Map.get(&1, :if), ctx))
 
     state = %{
       id: group.id,
@@ -27,7 +35,14 @@ defmodule Crank.Group.Server do
     }
 
     for step <- steps_to_skip do
-      skip_data = %{id: step.id, name: step.name, pipeline_id: pipeline_id, group_id: group.id, now_ms: Utils.now_ms()}
+      skip_data = %{
+        id: step.id,
+        name: step.name,
+        pipeline_id: pipeline_id,
+        group_id: group.id,
+        now_ms: Utils.now_ms()
+      }
+
       Output.Server.emit({:step_skipped, pipeline_id, skip_data})
     end
 
@@ -41,7 +56,13 @@ defmodule Crank.Group.Server do
 
   @impl true
   def handle_continue({:start_steps, steps}, state) do
-    event_data = %{id: state.id, name: state.name, step_count: length(steps), now_ms: Utils.now_ms()}
+    event_data = %{
+      id: state.id,
+      name: state.name,
+      step_count: length(steps),
+      now_ms: Utils.now_ms()
+    }
+
     Output.Server.emit({:group_started, state.pipeline_id, event_data})
 
     worker_sup = Registry.worker_sup(state.pipeline_id)
@@ -146,7 +167,10 @@ defmodule Crank.Group.Server do
 
   defp schedule_timeout(nil), do: nil
   defp schedule_timeout(:infinity), do: nil
-  defp schedule_timeout(ms) when is_integer(ms), do: Process.send_after(self(), :group_timeout, ms)
+
+  defp schedule_timeout(ms) when is_integer(ms) do
+    Process.send_after(self(), :group_timeout, ms)
+  end
 
   defp cancel_timeout(nil), do: :ok
   defp cancel_timeout(ref), do: Process.cancel_timer(ref)

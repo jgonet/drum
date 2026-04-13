@@ -61,8 +61,16 @@ defmodule Crank do
     Pipeline.add(pipeline, group(name, steps, opts))
   end
 
-  def tmp_dir!(run_opts, mode) when mode in [:transient] do
-    Crank.TmpDir.Server.create(run_opts.pipeline_id, mode)
+  def tmp_dir!(:transient) do
+    {:ok, path} = Crank.TmpDir.create_transient()
+    path
+  end
+
+  def tmp_dir!({:persistent, opts}) when is_list(opts) do
+    key = Keyword.fetch!(opts, :key)
+    ttl = Keyword.fetch!(opts, :ttl)
+    {:ok, path} = Crank.TmpDir.create_persistent(key, ttl)
+    path
   end
 
   def cmd!(cmd, cmd_opts) when is_binary(cmd) do
