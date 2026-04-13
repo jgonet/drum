@@ -12,6 +12,7 @@ defmodule Crank.TmpDir do
   def tmp_dirs_root, do: Path.join(cache_dir(), "tmp-dirs")
   defp dir_path(key_hash), do: Path.join(tmp_dirs_root(), "key-#{key_hash}")
   def metadata_path(dir), do: Path.join(dir, @metadata_file)
+  def path_for_key(key), do: key |> key_hash() |> dir_path()
 
   def sweep do
     with {:ok, entries} <- File.ls(tmp_dirs_root()) do
@@ -32,13 +33,11 @@ defmodule Crank.TmpDir do
   def create_persistent(key, ttl) do
     key_hash = key_hash(key)
     now = Utils.now_ms_wall()
-    path = dir_path(key_hash)
+    path = path_for_key(key)
     File.mkdir_p!(path)
 
-    meta_path = metadata_path(path)
-
     old_metadata =
-      case read_json(meta_path) do
+      case read_metadata(path) do
         {:ok, metadata} -> metadata
         _ -> %{}
       end
@@ -51,8 +50,19 @@ defmodule Crank.TmpDir do
     }
 
     refreshed_metadata = refresh_metadata(old_metadata, updated_metadata)
-    :ok = write_json(meta_path, refreshed_metadata)
+    :ok = write_json(metadata_path(path), refreshed_metadata)
     {:ok, path}
+  end
+
+  def read_metadata(path), do: read_json(metadata_path(path))
+
+  def update_ttl(path, new_ttl) do
+    now = Utils.now_ms_wall()
+
+    with {:ok, metadata} <- read_metadata(path) do
+      updated_metadata = Map.put(metadata, "expires_at", expires_at(new_ttl, now))
+      write_json(metadata_path(path), updated_metadata)
+    end
   end
 
   def key_hash(key) do
