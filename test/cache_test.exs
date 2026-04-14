@@ -83,8 +83,8 @@ defmodule Crank.CacheTest do
                  end
                )
 
-      assert_receive {:miss, ^entry_dir}
-      refute_receive :restore_called
+      assert_received {:miss, ^entry_dir}
+      refute_received :restore_called
       assert {:ok, metadata} = Crank.TmpDir.read_metadata(entry_dir)
       assert metadata["expires_at"] > System.system_time(:millisecond)
       assert "built" = File.read!(Path.join(entry_dir, "artifact"))
@@ -109,8 +109,8 @@ defmodule Crank.CacheTest do
                  end
                )
 
-      assert_receive {:miss, ^entry_dir}
-      refute_receive :restore_called
+      assert_received {:miss, ^entry_dir}
+      refute_received :restore_called
       assert {:ok, before_restore_metadata} = Crank.TmpDir.read_metadata(entry_dir)
       before_restore_expires_at = before_restore_metadata["expires_at"]
 
@@ -129,8 +129,8 @@ defmodule Crank.CacheTest do
                  end
                )
 
-      refute_receive :miss_called_again
-      assert_receive {:restore, ^entry_dir}
+      refute_received :miss_called_again
+      assert_received {:restore, ^entry_dir}
       assert {:ok, after_restore_metadata} = Crank.TmpDir.read_metadata(entry_dir)
       assert after_restore_metadata["expires_at"] > before_restore_expires_at
       assert "built" = File.read!(restored_path)
@@ -182,8 +182,8 @@ defmodule Crank.CacheTest do
                  end
                )
 
-      refute_receive :restore_called
-      assert_receive {:rebuilt, ^entry_dir}
+      refute_received :restore_called
+      assert_received {:rebuilt, ^entry_dir}
       assert "fresh" = File.read!(Path.join(entry_dir, "artifact"))
     end
 
@@ -223,8 +223,8 @@ defmodule Crank.CacheTest do
                  end
                )
 
-      refute_receive :restore_called
-      assert_receive {:retry_miss, ^entry_dir}
+      refute_received :restore_called
+      assert_received {:retry_miss, ^entry_dir}
       assert "rebuilt" = File.read!(Path.join(entry_dir, "artifact"))
     end
 
@@ -248,7 +248,7 @@ defmodule Crank.CacheTest do
                  end
                )
 
-      refute_receive :unexpected_restore
+      refute_received :unexpected_restore
 
       assert_raise RuntimeError, "corrupt restore", fn ->
         Crank.Cache.with_cache(%{}, "compile", key,
@@ -264,8 +264,8 @@ defmodule Crank.CacheTest do
         )
       end
 
-      assert_receive :restore_attempt
-      refute_receive :retry_miss
+      assert_received :restore_attempt
+      refute_received :retry_miss
 
       restored_path = Path.join(restore_root, "artifact")
 

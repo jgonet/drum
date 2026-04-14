@@ -567,23 +567,36 @@ defmodule CrankTest do
 
     assert {:ok, _data} = await_pipeline(pipeline_id)
     assert {:ok, %{done: true}} = Crank.await(pipeline_id)
-    assert {:error, :timeout} = Crank.await(pipeline_id, 10)
+    assert {:error, :timeout} = Crank.await(pipeline_id, 0)
   end
 
   test "await/2 with a list returns results in input order" do
+    test_pid = self()
+
     slow_pipeline =
       Crank.new()
       |> Crank.step("slow", fn _ctx, _opts ->
-        Process.sleep(50)
-        {:ctx_add, %{name: :slow}}
+        send(test_pid, {:slow_step, self()})
+
+        receive do
+          :release -> {:ctx_add, %{name: :slow}}
+        end
       end)
 
     fast_pipeline =
       Crank.new()
       |> Crank.step("fast", fn _ctx, _opts -> {:ctx_add, %{name: :fast}} end)
 
+    fast_id = fast_pipeline.id
+    Crank.Output.Test.subscribe(fast_id, self())
+    ExUnit.Callbacks.on_exit(fn -> Crank.Output.Test.unsubscribe(fast_id) end)
+
     {:ok, slow_id} = Crank.run(slow_pipeline)
-    {:ok, fast_id} = Crank.run(fast_pipeline)
+    {:ok, ^fast_id} = Crank.run(fast_pipeline)
+
+    assert_receive {:slow_step, slow_step_pid}
+    assert {:ok, _data} = await_pipeline(fast_id)
+    send(slow_step_pid, :release)
 
     assert [
              {:ok, %{name: :fast}},
@@ -606,7 +619,7 @@ defmodule CrankTest do
       |> Crank.run()
 
     assert_receive {:step_pid, step_pid}
-    assert {:error, :timeout} = Crank.await(pipeline_id, 10)
+    assert {:error, :timeout} = Crank.await(pipeline_id, 0)
     send(step_pid, :release)
     assert {:ok, %{done: true}} = Crank.await(pipeline_id)
   end
@@ -658,7 +671,7 @@ defmodule CrankTest do
     assert is_pid(owner)
     assert_receive {:pipeline_id, pipeline_id}
     assert_receive {:step_pid, step_pid}
-    assert {:error, :timeout} = Crank.await(pipeline_id, 10)
+    assert {:error, :timeout} = Crank.await(pipeline_id, 0)
     send(step_pid, :release)
     send(owner, :await)
     assert_receive {:owner_result, {:ok, %{done: true}}}

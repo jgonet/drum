@@ -27,22 +27,11 @@ defmodule Crank.OutputServerFailureTest do
     assert_receive {:DOWN, ^output_ref, :process, ^output_pid, :boom}
     assert_process_down(step_pid)
     assert_process_down(pipeline_pid)
-    assert {:error, :timeout} = Crank.await(pipeline_id, 50)
+    assert {:error, :timeout} = Crank.await(pipeline_id, 0)
   end
 
   defp assert_process_down(pid, timeout \\ 1_000) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-    do_assert_process_down(pid, deadline)
-  end
-
-  defp do_assert_process_down(pid, deadline) do
-    if not Process.alive?(pid) do
-      :ok
-    else
-      remaining = deadline - System.monotonic_time(:millisecond)
-      assert remaining > 0
-      Process.sleep(10)
-      do_assert_process_down(pid, deadline)
-    end
+    ref = Process.monitor(pid)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, timeout
   end
 end
