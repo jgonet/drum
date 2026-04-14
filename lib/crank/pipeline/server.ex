@@ -27,7 +27,12 @@ defmodule Crank.Pipeline.Server do
       owner_ref: owner_ref
     }
 
-    event_data = %{now_ms: Utils.now_ms(), items: summarize_items(pipeline.items)}
+    event_data = %{
+      now_ms: Utils.now_ms(),
+      items: summarize_items(pipeline.items),
+      meta: pipeline.meta
+    }
+
     Output.Server.emit({:pipeline_started, pipeline.id, event_data})
     {:ok, state, {:continue, :run_next}}
   end

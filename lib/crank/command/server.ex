@@ -7,17 +7,40 @@ defmodule Crank.Command.Server do
   end
 
   @impl true
-  def init(%{id: id, cmd: cmd, notify: notify, pipeline_id: pipeline_id, step_id: step_id, cd: cd}) do
+  def init(args) do
+    %{
+      id: id,
+      cmd: cmd,
+      notify: notify,
+      pipeline_id: pipeline_id,
+      step_id: step_id,
+      cd: cd
+    } = args
+
     exec_opts = [:monitor, {:stdout, self()}, {:stderr, self()}]
     exec_opts = if cd, do: [{:cd, cd} | exec_opts], else: exec_opts
 
     case :exec.run(cmd, exec_opts) do
       {:ok, exec_pid, os_pid} ->
-        event_data = %{id: id, cmd: cmd, step_id: step_id, pipeline_id: pipeline_id, now_ms: Utils.now_ms()}
+        event_data = %{
+          id: id,
+          cmd: cmd,
+          step_id: step_id,
+          pipeline_id: pipeline_id,
+          now_ms: Utils.now_ms()
+        }
+
         Output.Server.emit({:command_started, pipeline_id, event_data})
 
         {:ok,
-         %{exec_pid: exec_pid, os_pid: os_pid, id: id, pipeline_id: pipeline_id, step_id: step_id, notify: notify}}
+         %{
+           exec_pid: exec_pid,
+           os_pid: os_pid,
+           id: id,
+           pipeline_id: pipeline_id,
+           step_id: step_id,
+           notify: notify
+         }}
 
       {:error, reason} ->
         {:stop, reason}
@@ -26,21 +49,40 @@ defmodule Crank.Command.Server do
 
   @impl true
   def handle_info({:stdout, os_pid, data}, %{os_pid: os_pid} = state) do
-    event_data = %{id: state.id, step_id: state.step_id, pipeline_id: state.pipeline_id, data: data, now_ms: Utils.now_ms()}
+    event_data = %{
+      id: state.id,
+      step_id: state.step_id,
+      pipeline_id: state.pipeline_id,
+      data: data,
+      now_ms: Utils.now_ms()
+    }
+
     Output.Server.emit({:command_stdout, state.pipeline_id, event_data})
     {:noreply, state}
   end
 
   @impl true
   def handle_info({:stderr, os_pid, data}, %{os_pid: os_pid} = state) do
-    event_data = %{id: state.id, step_id: state.step_id, pipeline_id: state.pipeline_id, data: data, now_ms: Utils.now_ms()}
+    event_data = %{
+      id: state.id,
+      step_id: state.step_id,
+      pipeline_id: state.pipeline_id,
+      data: data,
+      now_ms: Utils.now_ms()
+    }
+
     Output.Server.emit({:command_stderr, state.pipeline_id, event_data})
     {:noreply, state}
   end
 
   @impl true
   def handle_info({:DOWN, os_pid, :process, _pid, exit_reason}, %{os_pid: os_pid} = state) do
-    event_data = %{id: state.id, step_id: state.step_id, pipeline_id: state.pipeline_id, now_ms: Utils.now_ms()}
+    event_data = %{
+      id: state.id,
+      step_id: state.step_id,
+      pipeline_id: state.pipeline_id,
+      now_ms: Utils.now_ms()
+    }
 
     case to_numeric_exit_code(exit_reason) do
       0 ->
@@ -48,7 +90,9 @@ defmodule Crank.Command.Server do
         send(state.notify, {:command_done, state.id, :ok})
 
       code ->
-        Output.Server.emit({:command_failed, state.pipeline_id, Map.put(event_data, :exit_code, code)})
+        data = Map.put(event_data, :exit_code, code)
+        Output.Server.emit({:command_failed, state.pipeline_id, data})
+
         send(state.notify, {:command_done, state.id, {:error, {:exit_code, code}}})
     end
 

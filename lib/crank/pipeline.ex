@@ -1,6 +1,6 @@
 defmodule Crank.Pipeline do
   @enforce_keys [:id]
-  defstruct [:id, items: [], ctx: %{}, cd: nil]
+  defstruct [:id, items: [], ctx: %{}, cd: nil, meta: %{}]
 
   def new(ctx \\ %{}, opts \\ []) when is_map(ctx) do
     %__MODULE__{id: make_ref(), ctx: ctx, cd: opts[:cd]}

@@ -7,7 +7,8 @@ defmodule Crank.Group.Server do
   end
 
   @impl true
-  def init(%{group: group, pipeline_id: pipeline_id, ctx: ctx} = args) do
+  def init(args) do
+    %{group: group, pipeline_id: pipeline_id, ctx: ctx} = args
     parent_cd = Map.get(args, :parent_cd)
 
     run_opts = %{
@@ -148,7 +149,13 @@ defmodule Crank.Group.Server do
     cancel_timeout(state.timer_ref)
     pipeline = Registry.pipeline(state.pipeline_id)
 
-    event_data = %{id: state.id, name: state.name, reason: reason, now_ms: Utils.now_ms()}
+    event_data = %{
+      id: state.id,
+      name: state.name,
+      reason: reason,
+      now_ms: Utils.now_ms()
+    }
+
     Output.Server.emit({:group_failed, state.pipeline_id, event_data})
 
     GenServer.cast(pipeline, {:step_done, state.id, {:error, reason}, nil})

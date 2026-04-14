@@ -2,6 +2,7 @@ defmodule Crank do
   @moduledoc """
   """
   alias Crank.{Command, Group, Pipeline, Registry, Step, Utils}
+  alias Crank.Subscriptions.{Dispatcher, PathSpec}
 
   defmacro script_dir do
     __CALLER__.file |> Path.dirname() |> Path.expand()
@@ -17,7 +18,12 @@ defmodule Crank do
     Dotenvy.source!(sources, require_files: true, side_effect: nil)
   end
 
-  def run(%Pipeline{} = pipeline), do: Pipeline.start_pipeline(pipeline, owner: self())
+  def run(%Pipeline{} = pipeline) do
+    {pipeline, subscriber_pid} = prepare_pipeline_for_run(pipeline)
+    {:ok, pipeline_id} = Pipeline.start_pipeline(pipeline, owner: self())
+    maybe_send_pipeline_id(subscriber_pid, pipeline_id)
+    {:ok, pipeline_id}
+  end
 
   def await(pipeline_id_or_ids, timeout \\ 5_000)
 
@@ -38,6 +44,28 @@ defmodule Crank do
       :ok -> :ok
       {:error, :noproc} -> :ok
     end
+  end
+
+  def notify(signal), do: Dispatcher.notify(signal)
+
+  def watch(paths) do
+    validate_watch_paths!(paths)
+    Dispatcher.watch(paths)
+  rescue
+    error in GlobEx.CompileError ->
+      raise ArgumentError,
+            "invalid watch pattern #{inspect(error.input)}: #{Exception.message(error)}"
+  end
+
+  def unwatch(watch_ref) when is_reference(watch_ref) do
+    Dispatcher.unwatch(watch_ref)
+  end
+
+  def subscribe(name, callback, opts \\ []) when is_function(callback, 2),
+    do: Dispatcher.subscribe(name, callback, opts)
+
+  def unsubscribe(subscription_ref) when is_reference(subscription_ref) do
+    Dispatcher.unsubscribe(subscription_ref)
   end
 
   def step(name, action), do: Step.new(name, action, [])
@@ -167,6 +195,46 @@ defmodule Crank do
       {:crank_pipeline_result, ^pipeline_id, result} -> result
     after
       timeout -> {:error, :timeout}
+    end
+  end
+
+  defp prepare_pipeline_for_run(%Pipeline{} = pipeline) do
+    case Elixir.Registry.lookup(Crank.Subscriptions.RunRegistry, self()) do
+      [{_owner, {subscriber_pid, run_meta}}] ->
+        next_pipeline = %{pipeline | meta: Map.merge(pipeline.meta, run_meta)}
+        {next_pipeline, subscriber_pid}
+
+      [] ->
+        {pipeline, nil}
+    end
+  end
+
+  defp maybe_send_pipeline_id(nil, _pipeline_id), do: :ok
+
+  defp maybe_send_pipeline_id(subscriber_pid, pipeline_id) do
+    send(subscriber_pid, {:subscription, :pipeline_id, self(), pipeline_id})
+    :ok
+  end
+
+  defp validate_watch_paths!(path) when is_binary(path) do
+    validate_watch_path!(path)
+  end
+
+  defp validate_watch_paths!(paths) when is_list(paths) do
+    Enum.each(paths, &validate_watch_path!/1)
+  end
+
+  defp validate_watch_paths!(_paths), do: :ok
+
+  defp validate_watch_path!(path) when is_binary(path) do
+    expanded_path = Path.expand(path)
+
+    if not PathSpec.valid?(path) do
+      suggested_children = Path.join(expanded_path, "*")
+      suggested_recursive = Path.join(expanded_path, "**")
+
+      raise ArgumentError,
+            "ambiguous watch path #{inspect(path)}: use #{inspect(suggested_children)} or #{inspect(suggested_recursive)}"
     end
   end
 end
