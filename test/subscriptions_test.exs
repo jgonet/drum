@@ -177,6 +177,87 @@ defmodule Crank.SubscriptionsTest do
     assert {:error, :timeout} = Crank.await(subscription_ref, 0)
   end
 
+  test "subscribe/3 can stop after draining the queued signal" do
+    test_pid = self()
+
+    subscription_ref =
+      Crank.subscribe(
+        "draining stop",
+        fn ctx, {:tick, %{value: value}} ->
+          seen = Map.get(ctx, :seen, [])
+          next_ctx = Map.put(ctx, :seen, seen ++ [value])
+          send(test_pid, {:run, value, seen, self()})
+
+          case value do
+            1 ->
+              receive do
+                :release_first -> {:stop, :drain, next_ctx}
+              end
+
+            _ ->
+              {:ok, next_ctx}
+          end
+        end,
+        base_context: %{seen: []},
+        on_failure: :continue,
+        rerun: :wait
+      )
+
+    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+
+    subscriber_pid = lookup_subscription_pid(subscription_ref)
+    subscriber_ref = Process.monitor(subscriber_pid)
+
+    assert :ok = Crank.notify({:tick, %{value: 1}})
+    assert_receive {:run, 1, [], run_pid_1}, 5_000
+
+    assert :ok = Crank.notify({:tick, %{value: 2}})
+    assert {:error, :timeout} = Crank.await(subscription_ref, 0)
+
+    send(run_pid_1, :release_first)
+
+    assert_receive {:run, 2, [1], _run_pid_2}, 5_000
+    assert {:ok, %{seen: [1, 2]}} = Crank.await(subscription_ref, 5_000)
+    assert_receive {:DOWN, ^subscriber_ref, :process, ^subscriber_pid, :normal}, 5_000
+  end
+
+  test "subscribe/3 can stop after an idle window with no new signals" do
+    test_pid = self()
+    idle_ms = 100
+
+    subscription_ref =
+      Crank.subscribe(
+        "idle stop",
+        fn ctx, {:tick, %{value: value}} ->
+          seen = Map.get(ctx, :seen, [])
+          next_ctx = Map.put(ctx, :seen, seen ++ [value])
+          send(test_pid, {:run, value, seen})
+
+          case value do
+            1 -> {:stop, {:idle, idle_ms}, next_ctx}
+            _ -> {:ok, next_ctx}
+          end
+        end,
+        base_context: %{seen: []},
+        on_failure: :continue
+      )
+
+    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+
+    subscriber_pid = lookup_subscription_pid(subscription_ref)
+    subscriber_ref = Process.monitor(subscriber_pid)
+
+    assert :ok = Crank.notify({:tick, %{value: 1}})
+    assert_receive {:run, 1, []}, 5_000
+
+    assert :ok = Crank.notify({:tick, %{value: 2}})
+    assert_receive {:run, 2, [1]}, 5_000
+
+    assert {:error, :timeout} = Crank.await(subscription_ref, 20)
+    assert {:ok, %{seen: [1, 2]}} = Crank.await(subscription_ref, 5_000)
+    assert_receive {:DOWN, ^subscriber_ref, :process, ^subscriber_pid, :normal}, 5_000
+  end
+
   test "subscribe/3 with rerun {:kill, :graceful} restarts after stopping the active pipeline" do
     test_pid = self()
 
