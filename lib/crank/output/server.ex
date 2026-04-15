@@ -18,7 +18,17 @@ defmodule Crank.Output.Server do
   def init({output_mod, init_args}) do
     Process.flag(:trap_exit, true)
     {mod, args} = Crank.Output.resolve(output_mod, init_args)
+    register_at_exit()
     {:ok, {mod, mod.init(args)}}
+  end
+
+  defp register_at_exit do
+    System.at_exit(fn _status ->
+      case Process.whereis(__MODULE__) do
+        nil -> :ok
+        _pid -> emit_sync(:terminate)
+      end
+    end)
   end
 
   @impl true
