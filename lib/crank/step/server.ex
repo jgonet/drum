@@ -95,7 +95,7 @@ defmodule Crank.Step.Server do
       now_ms: Utils.now_ms()
     }
 
-    Output.Server.emit({:step_finished, state.pipeline_id, event_data})
+    Output.Server.emit_sync({:step_finished, state.pipeline_id, event_data})
     notify_done(state, :ok, ctx_op)
     {:stop, :normal, state}
   end
@@ -127,7 +127,7 @@ defmodule Crank.Step.Server do
       now_ms: Utils.now_ms()
     }
 
-    Output.Server.emit({:step_failed, state.pipeline_id, event_data})
+    Output.Server.emit_sync({:step_failed, state.pipeline_id, event_data})
   end
 
   defp notify_done(%{group_id: nil} = state, result, ctx_op) do

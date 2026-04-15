@@ -1,5 +1,7 @@
 defmodule Crank.Subscriptions.Dispatcher do
+  alias Crank.Output
   alias Crank.Subscriptions.{PathSpec, Subscriber, SubscriptionOpts, Watcher}
+  alias Crank.Utils
 
   @subscriber_registry Crank.Subscriptions.SubscriberRegistry
   @watcher_registry Crank.Subscriptions.WatcherRegistry
@@ -11,7 +13,7 @@ defmodule Crank.Subscriptions.Dispatcher do
     ref = make_ref()
 
     child_args =
-      Map.merge(normalized_opts, %{callback: callback, name: name, ref: ref})
+      Map.merge(normalized_opts, %{callback: callback, name: name, owner: self(), ref: ref})
 
     {:ok, _pid} = DynamicSupervisor.start_child(@subscriber_supervisor, {Subscriber, child_args})
     ref
@@ -25,9 +27,10 @@ defmodule Crank.Subscriptions.Dispatcher do
   end
 
   def watch(paths) do
-    path_specs = PathSpec.normalize_paths!(paths)
+    raw_patterns = normalize_watch_patterns(paths)
+    path_specs = PathSpec.normalize_paths!(raw_patterns)
     ref = make_ref()
-    child_args = %{path_specs: path_specs, ref: ref}
+    child_args = %{path_specs: path_specs, raw_patterns: raw_patterns, ref: ref}
 
     {:ok, _pid} = DynamicSupervisor.start_child(@watch_supervisor, {Watcher, child_args})
     ref
@@ -35,8 +38,13 @@ defmodule Crank.Subscriptions.Dispatcher do
 
   def unwatch(ref) when is_reference(ref) do
     case Registry.lookup(@watcher_registry, ref) do
-      [{pid, _}] -> stop_watcher(pid)
-      [] -> :ok
+      [{pid, _}] ->
+        event_data = %{now_ms: Utils.now_ms()}
+        Output.Server.emit({:watcher_removed, ref, event_data})
+        stop_watcher(pid)
+
+      [] ->
+        :ok
     end
   end
 
@@ -64,4 +72,7 @@ defmodule Crank.Subscriptions.Dispatcher do
   defp validate_signal!(signal) do
     raise ArgumentError, "expected signal to be {atom, map}, got: #{inspect(signal)}"
   end
+
+  defp normalize_watch_patterns(path) when is_binary(path), do: [path]
+  defp normalize_watch_patterns(paths) when is_list(paths), do: paths
 end

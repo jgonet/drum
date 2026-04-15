@@ -86,12 +86,12 @@ defmodule Crank.Command.Server do
 
     case to_numeric_exit_code(exit_reason) do
       0 ->
-        Output.Server.emit({:command_finished, state.pipeline_id, event_data})
+        Output.Server.emit_sync({:command_finished, state.pipeline_id, event_data})
         send(state.notify, {:command_done, state.id, :ok})
 
       code ->
         data = Map.put(event_data, :exit_code, code)
-        Output.Server.emit({:command_failed, state.pipeline_id, data})
+        Output.Server.emit_sync({:command_failed, state.pipeline_id, data})
 
         send(state.notify, {:command_done, state.id, {:error, {:exit_code, code}}})
     end

@@ -1,6 +1,7 @@
 defmodule Crank.TmpDir do
   alias Crank.Utils
 
+  @dir_hash_length 8
   @metadata_file ".crank_meta.json"
 
   defp cache_dir do
@@ -16,9 +17,23 @@ defmodule Crank.TmpDir do
   end
 
   def tmp_dirs_root, do: Path.join(cache_dir(), "tmp-dirs")
-  defp dir_path(key_hash), do: Path.join(tmp_dirs_root(), "key-#{key_hash}")
+  defp dir_path(key_hash), do: Path.join(tmp_dirs_root(), short_key_hash(key_hash))
   def metadata_path(dir), do: Path.join(dir, @metadata_file)
   def path_for_key(key), do: key |> key_hash() |> dir_path()
+
+  def ensure_dirs(path, ensure_dirs) when is_list(ensure_dirs) do
+    Enum.each(ensure_dirs, fn ensure_dir ->
+      dir_path = ensured_dir_path(path, ensure_dir)
+      File.mkdir_p!(dir_path)
+    end)
+
+    :ok
+  end
+
+  def ensure_dirs(_path, ensure_dirs) do
+    raise ArgumentError,
+          "expected :ensure_dirs to be a list of relative paths, got: #{inspect(ensure_dirs)}"
+  end
 
   def sweep do
     with {:ok, entries} <- File.ls(tmp_dirs_root()) do
@@ -74,6 +89,10 @@ defmodule Crank.TmpDir do
   def key_hash(key) do
     binary = :erlang.term_to_binary(key)
     :crypto.hash(:sha256, binary) |> Base.encode16(case: :lower)
+  end
+
+  defp short_key_hash(key_hash) do
+    String.slice(key_hash, 0, @dir_hash_length)
   end
 
   def duration_ms({n, unit}), do: n * unit_ms(unit)
@@ -136,4 +155,21 @@ defmodule Crank.TmpDir do
   defp unit_ms(u) when u in [:hour, :hours], do: 60 * unit_ms(:minute)
   defp unit_ms(u) when u in [:day, :days], do: 24 * unit_ms(:hour)
   defp unit_ms(u) when u in [:week, :weeks], do: 7 * unit_ms(:day)
+
+  defp ensured_dir_path(root, ensure_dir) when is_binary(ensure_dir) do
+    expanded_root = Path.expand(root)
+    expanded_dir = Path.expand(ensure_dir, expanded_root)
+
+    if String.starts_with?(expanded_dir <> "/", expanded_root <> "/") do
+      expanded_dir
+    else
+      raise ArgumentError,
+            "expected ensured dir to stay within #{inspect(root)}, got: #{inspect(ensure_dir)}"
+    end
+  end
+
+  defp ensured_dir_path(_root, ensure_dir) do
+    raise ArgumentError,
+          "expected each ensured dir to be a binary path, got: #{inspect(ensure_dir)}"
+  end
 end

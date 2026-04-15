@@ -1,7 +1,9 @@
 defmodule Crank.Subscriptions.Watcher do
   use GenServer, restart: :temporary
 
+  alias Crank.Output
   alias Crank.Subscriptions.{Dispatcher, PathSpec}
+  alias Crank.Utils
 
   def start_link(args) when is_map(args) do
     GenServer.start_link(__MODULE__, args)
@@ -10,6 +12,7 @@ defmodule Crank.Subscriptions.Watcher do
   @impl true
   def init(args) do
     path_specs = Map.fetch!(args, :path_specs)
+    raw_patterns = Map.fetch!(args, :raw_patterns)
     ref = Map.fetch!(args, :ref)
     paths = path_specs |> Enum.map(& &1.path) |> Enum.uniq()
 
@@ -19,6 +22,14 @@ defmodule Crank.Subscriptions.Watcher do
       {:ok, watcher_pid} ->
         :ok = FileSystem.subscribe(watcher_pid)
         {:ok, _} = Registry.register(Crank.Subscriptions.WatcherRegistry, ref, nil)
+
+        event_data = %{
+          now_ms: Utils.now_ms(),
+          patterns: raw_patterns,
+          roots: paths
+        }
+
+        Output.Server.emit({:watcher_registered, ref, event_data})
 
         state = %{
           path_specs: path_specs,
@@ -45,6 +56,13 @@ defmodule Crank.Subscriptions.Watcher do
         |> filter_changed_paths(state.path_specs)
 
       if changed != [] do
+        watcher_event_data = %{
+          changed: changed,
+          now_ms: Utils.now_ms()
+        }
+
+        Output.Server.emit({:watcher_updated, state.ref, watcher_event_data})
+
         event_data = %{watch: state.ref, changed: changed}
         Dispatcher.notify({:watch, event_data})
       end
@@ -56,6 +74,8 @@ defmodule Crank.Subscriptions.Watcher do
   @impl true
   def handle_info({:file_event, watcher_pid, :stop}, state) do
     if watcher_pid == state.watcher_pid do
+      event_data = %{now_ms: Utils.now_ms()}
+      Output.Server.emit({:watcher_removed, state.ref, event_data})
       {:stop, :normal, state}
     else
       {:noreply, state}

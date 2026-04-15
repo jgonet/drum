@@ -112,8 +112,11 @@ defmodule Crank do
     Pipeline.add(pipeline, group(name, steps, opts))
   end
 
-  def tmp_dir!(:transient) do
+  def tmp_dir!(:transient), do: tmp_dir!({:transient, []})
+
+  def tmp_dir!({:transient, opts}) when is_list(opts) do
     {:ok, path} = Crank.TmpDir.create_transient()
+    :ok = Crank.TmpDir.ensure_dirs(path, Keyword.get(opts, :ensure_dirs, []))
     path
   end
 
@@ -121,6 +124,7 @@ defmodule Crank do
     key = Keyword.fetch!(opts, :key)
     ttl = Keyword.fetch!(opts, :ttl)
     {:ok, path} = Crank.TmpDir.create_persistent(key, ttl)
+    :ok = Crank.TmpDir.ensure_dirs(path, Keyword.get(opts, :ensure_dirs, []))
     path
   end
 

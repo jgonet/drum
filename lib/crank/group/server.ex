@@ -121,7 +121,7 @@ defmodule Crank.Group.Server do
     pipeline = Registry.pipeline(state.pipeline_id)
 
     event_data = %{id: state.id, name: state.name, now_ms: Utils.now_ms()}
-    Output.Server.emit({:group_skipped, state.pipeline_id, event_data})
+    Output.Server.emit_sync({:group_skipped, state.pipeline_id, event_data})
 
     GenServer.cast(pipeline, {:step_done, state.id, :ok, nil})
     {:stop, :normal, state}
@@ -135,7 +135,7 @@ defmodule Crank.Group.Server do
         pipeline = Registry.pipeline(state.pipeline_id)
 
         event_data = %{id: state.id, name: state.name, now_ms: Utils.now_ms()}
-        Output.Server.emit({:group_finished, state.pipeline_id, event_data})
+        Output.Server.emit_sync({:group_finished, state.pipeline_id, event_data})
 
         GenServer.cast(pipeline, {:step_done, state.id, :ok, {:ctx_add, merged}})
         {:stop, :normal, state}
@@ -156,7 +156,7 @@ defmodule Crank.Group.Server do
       now_ms: Utils.now_ms()
     }
 
-    Output.Server.emit({:group_failed, state.pipeline_id, event_data})
+    Output.Server.emit_sync({:group_failed, state.pipeline_id, event_data})
 
     GenServer.cast(pipeline, {:step_done, state.id, {:error, reason}, nil})
     {:stop, {:shutdown, :group_failed}, state}

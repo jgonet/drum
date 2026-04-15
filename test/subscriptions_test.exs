@@ -18,6 +18,31 @@ defmodule Crank.SubscriptionsTest do
     assert_receive {:signal, %{}, 0}
   end
 
+  test "watch signals include run_n for each callback run" do
+    test_pid = self()
+    watch_ref = make_ref()
+
+    subscription_ref =
+      Crank.subscribe(
+        "watch run count",
+        fn _ctx, {:watch, %{watch: ref, changed: changed, run_n: run_n}} ->
+          send(test_pid, {:watch_signal, ref, changed, run_n})
+          :ok
+        end,
+        on_failure: :continue
+      )
+
+    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+
+    first_signal = {:watch, %{changed: ["app.ts"], watch: watch_ref}}
+    assert :ok = Crank.notify(first_signal)
+    assert_receive {:watch_signal, ^watch_ref, ["app.ts"], 1}
+
+    second_signal = {:watch, %{changed: ["app.ts"], watch: watch_ref}}
+    assert :ok = Crank.notify(second_signal)
+    assert_receive {:watch_signal, ^watch_ref, ["app.ts"], 2}
+  end
+
   test "subscribe/3 preserves subscriber ctx across invocations" do
     test_pid = self()
 
@@ -77,6 +102,79 @@ defmodule Crank.SubscriptionsTest do
 
     send(run_pid_2, {:release, 3})
     assert_receive {:finished, 3}
+  end
+
+  test "subscribe/3 can be awaited until unsubscribe" do
+    test_pid = self()
+
+    subscription_ref =
+      Crank.subscribe(
+        "awaitable subscription",
+        fn ctx, signal ->
+          case signal do
+            {:tick, %{value: value}} ->
+              next_ctx = Map.put(ctx, :value, value)
+              send(test_pid, {:ctx, next_ctx})
+              {:ok, next_ctx}
+
+            _ ->
+              :ok
+          end
+        end,
+        on_failure: :continue,
+        rerun: :wait
+      )
+
+    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+
+    assert :ok = Crank.notify({:other, %{}})
+    assert {:error, :timeout} = Crank.await(subscription_ref, 0)
+
+    assert :ok = Crank.notify({:tick, %{value: 1}})
+    assert_receive {:ctx, %{value: 1}}
+    assert {:error, :timeout} = Crank.await(subscription_ref, 0)
+
+    assert :ok = Crank.notify({:tick, %{value: 2}})
+    assert_receive {:ctx, %{value: 2}}
+    assert {:error, :timeout} = Crank.await(subscription_ref, 0)
+
+    Task.start(fn ->
+      Process.sleep(50)
+      Crank.unsubscribe(subscription_ref)
+    end)
+
+    assert {:ok, %{value: 2}} = Crank.await(subscription_ref, 5_000)
+    assert {:error, :timeout} = Crank.await(subscription_ref, 0)
+  end
+
+  test "subscribe/3 can stop itself with the final ctx from a controlled pipeline" do
+    subscription_ref =
+      Crank.subscribe(
+        "self stopping subscription",
+        fn ctx, {:tick, %{value: value}} ->
+          ctx
+          |> Crank.new()
+          |> Crank.step("record value", fn _ctx, _opts -> {:ctx_add, %{value: value}} end)
+          |> Crank.run()
+          |> Crank.await(:infinity)
+          |> case do
+            {:ok, new_ctx} -> {:stop, new_ctx}
+            {:error, _reason, _ctx} -> :ok
+          end
+        end,
+        base_context: %{count: 1},
+        on_failure: :continue
+      )
+
+    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+
+    subscriber_pid = lookup_subscription_pid(subscription_ref)
+    subscriber_ref = Process.monitor(subscriber_pid)
+
+    assert :ok = Crank.notify({:tick, %{value: 2}})
+    assert {:ok, %{count: 1, value: 2}} = Crank.await(subscription_ref, 5_000)
+    assert_receive {:DOWN, ^subscriber_ref, :process, ^subscriber_pid, :normal}, 5_000
+    assert {:error, :timeout} = Crank.await(subscription_ref, 0)
   end
 
   test "subscribe/3 with rerun {:kill, :graceful} restarts after stopping the active pipeline" do
@@ -140,6 +238,74 @@ defmodule Crank.SubscriptionsTest do
     Crank.Output.Test.unsubscribe(pipeline_id_2)
   end
 
+  test "subscriptions emit dashboard signal and restart events" do
+    test_pid = self()
+
+    subscription_ref =
+      Crank.subscribe(
+        "ui pipeline",
+        fn ctx, {:tick, %{value: value}} ->
+          pipeline =
+            Crank.new(ctx)
+            |> Crank.step("sleep", "sleep 10")
+
+          send(test_pid, {:planned_pipeline, value, pipeline.id, self()})
+
+          receive do
+            {:allow_run, ^value} ->
+              pipeline_id = Crank.run(pipeline)
+              send(test_pid, {:pipeline_started, value, pipeline_id})
+
+              pipeline_id
+              |> Crank.await(:infinity)
+              |> case do
+                {:ok, new_ctx} -> {:ok, new_ctx}
+                {:error, _reason, _ctx} -> :ok
+              end
+          end
+        end,
+        on_failure: :continue,
+        rerun: {:kill, :graceful}
+      )
+
+    Crank.Output.Test.subscribe(subscription_ref, self())
+
+    on_exit(fn ->
+      Crank.Output.Test.unsubscribe(subscription_ref)
+      Crank.unsubscribe(subscription_ref)
+    end)
+
+    assert :ok = Crank.notify({:tick, %{value: 1}})
+
+    assert_receive {:crank_event,
+                    {:ui_pipeline_signal, ^subscription_ref,
+                     %{pending: false, signal: {:tick, %{value: 1}}}}},
+                   5_000
+
+    assert_receive {:planned_pipeline, 1, pipeline_id_1, task_pid_1}, 5_000
+    send(task_pid_1, {:allow_run, 1})
+    assert_receive {:pipeline_started, 1, ^pipeline_id_1}, 5_000
+
+    assert_receive {:crank_event,
+                    {:ui_pipeline_run_started, ^subscription_ref,
+                     %{pipeline_id: ^pipeline_id_1, run_n: 1}}},
+                   5_000
+
+    assert :ok = Crank.notify({:tick, %{value: 2}})
+
+    assert_receive {:crank_event,
+                    {:ui_pipeline_signal, ^subscription_ref,
+                     %{pending: true, signal: {:tick, %{value: 2}}}}},
+                   5_000
+
+    assert_receive {:crank_event,
+                    {:ui_pipeline_restarting, ^subscription_ref,
+                     %{mode: :graceful, signal: {:tick, %{value: 2}}}}},
+                   5_000
+
+    assert :ok = Crank.stop(pipeline_id_1, :graceful)
+  end
+
   test "subscribe/3 keeps the previous ctx when a pipeline run fails" do
     test_pid = self()
 
@@ -151,7 +317,7 @@ defmodule Crank.SubscriptionsTest do
 
           case mode do
             :observe ->
-              :ignore
+              :ok
 
             :success ->
               ctx
@@ -235,6 +401,7 @@ defmodule Crank.SubscriptionsTest do
                      %{
                        meta: %{
                          crank: %{
+                           logical_id: ^subscription_ref,
                            run_n: 1,
                            subscription_name: "meta pipeline",
                            subscription_ref: ^subscription_ref
@@ -255,6 +422,7 @@ defmodule Crank.SubscriptionsTest do
                      %{
                        meta: %{
                          crank: %{
+                           logical_id: ^subscription_ref,
                            run_n: 2,
                            subscription_name: "meta pipeline",
                            subscription_ref: ^subscription_ref
@@ -349,11 +517,13 @@ defmodule Crank.SubscriptionsTest do
 
     assert :ok = Crank.unsubscribe(subscription_ref)
     assert_receive :cleanup_started, 5_000
+    assert {:error, :timeout} = Crank.await(subscription_ref, 0)
     assert Process.alive?(subscriber_pid)
     refute_receive {:DOWN, ^subscriber_ref, :process, ^subscriber_pid, _reason}, 100
 
     send(run_pid, :finish_cleanup)
 
+    assert {:ok, %{}} = Crank.await(subscription_ref, 5_000)
     assert_receive {:DOWN, ^subscriber_ref, :process, ^subscriber_pid, :normal}, 5_000
   end
 
@@ -401,6 +571,59 @@ defmodule Crank.SubscriptionsTest do
     assert_receive :callback_recovered, 5_000
   end
 
+  test "subscribe/3 treats invalid callback returns as failures controlled by on_failure" do
+    test_pid = self()
+
+    subscription_ref =
+      Crank.subscribe(
+        "invalid return continue",
+        fn ctx, {:tick, %{mode: mode}} ->
+          case mode do
+            :invalid ->
+              send(test_pid, :invalid_returned)
+              :ignore
+
+            :ok ->
+              send(test_pid, {:ctx, ctx})
+              :ok
+          end
+        end,
+        base_context: %{count: 1},
+        on_failure: :continue
+      )
+
+    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+
+    assert :ok = Crank.notify({:tick, %{mode: :invalid}})
+    assert_receive :invalid_returned, 5_000
+    assert {:error, :timeout} = Crank.await(subscription_ref, 0)
+
+    assert :ok = Crank.notify({:tick, %{mode: :ok}})
+    assert_receive {:ctx, %{count: 1}}, 5_000
+  end
+
+  test "subscribe/3 with on_failure :drop stops after an invalid callback return" do
+    subscription_ref =
+      Crank.subscribe(
+        "invalid return drop",
+        fn _ctx, {:tick, %{}} ->
+          :ignore
+        end,
+        on_failure: :drop
+      )
+
+    subscriber_pid = lookup_subscription_pid(subscription_ref)
+    subscriber_ref = Process.monitor(subscriber_pid)
+
+    assert :ok = Crank.notify({:tick, %{}})
+
+    assert {:error, {:invalid_return, :ignore}, %{}} = Crank.await(subscription_ref, 5_000)
+
+    assert_receive {:DOWN, ^subscriber_ref, :process, ^subscriber_pid,
+                    {:subscription_failed, _, _}},
+                   5_000
+  end
+
   @tag :tmp_dir
   test "watch/1 dispatches file system signals to subscribers", %{tmp_dir: tmp_dir} do
     test_pid = self()
@@ -430,6 +653,28 @@ defmodule Crank.SubscriptionsTest do
     assert_receive {:watch_event, ^watch_ref, changed}, 5_000
     assert is_list(changed)
     assert Enum.all?(changed, &is_binary/1)
+  end
+
+  @tag :tmp_dir
+  test "watchers emit dashboard update and removal events", %{tmp_dir: tmp_dir} do
+    watched_file = Path.join(tmp_dir, "watched.txt")
+    watch_ref = Crank.watch(Path.join(tmp_dir, "*.txt"))
+    Crank.Output.Test.subscribe(watch_ref, self())
+
+    on_exit(fn ->
+      Crank.Output.Test.unsubscribe(watch_ref)
+      Crank.unwatch(watch_ref)
+    end)
+
+    wait_for_watcher_ready(watch_ref, tmp_dir, ext: ".txt")
+    assert :ok = File.write(watched_file, "hello")
+
+    changed = await_watcher_update(watch_ref, watched_file, 5_000)
+    assert watched_file in changed
+
+    assert :ok = Crank.unwatch(watch_ref)
+
+    assert_receive {:crank_event, {:watcher_removed, ^watch_ref, %{now_ms: _}}}, 5_000
   end
 
   test "path specs treat literals as exact-only matches" do
@@ -555,7 +800,9 @@ defmodule Crank.SubscriptionsTest do
     timeout = Keyword.get(opts, :timeout, 5_000)
     ext = Keyword.get(opts, :ext, "")
     test_pid = self()
-    sentinel = Path.join(sentinel_dir, "crank_sentinel_#{System.unique_integer([:positive])}#{ext}")
+
+    sentinel =
+      Path.join(sentinel_dir, "crank_sentinel_#{System.unique_integer([:positive])}#{ext}")
 
     sub_ref =
       Crank.subscribe(
@@ -634,6 +881,20 @@ defmodule Crank.SubscriptionsTest do
     after
       timeout ->
         flunk("expected watch event for #{inspect(changed_path)}")
+    end
+  end
+
+  defp await_watcher_update(watch_ref, changed_path, timeout) do
+    receive do
+      {:crank_event, {:watcher_updated, ^watch_ref, %{changed: changed}}} ->
+        if changed_path in changed do
+          changed
+        else
+          await_watcher_update(watch_ref, changed_path, timeout)
+        end
+    after
+      timeout ->
+        flunk("expected watcher_updated event for #{inspect(changed_path)}")
     end
   end
 end

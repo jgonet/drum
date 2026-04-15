@@ -39,9 +39,9 @@ defmodule Crank.Pipeline.Server do
 
   @impl true
   def handle_continue(:run_next, %{items: []} = state) do
-    notify_owner(state, {:ok, state.ctx})
     event_data = %{now_ms: Utils.now_ms()}
-    Output.Server.emit({:pipeline_finished, state.pipeline_id, event_data})
+    Output.Server.emit_sync({:pipeline_finished, state.pipeline_id, event_data})
+    notify_owner(state, {:ok, state.ctx})
     {:stop, :normal, state}
   end
 
@@ -74,10 +74,9 @@ defmodule Crank.Pipeline.Server do
   @impl true
   def handle_call({:stop, :graceful}, _from, state) do
     reason = {:stopped, :graceful}
-    notify_owner(state, {:error, reason, state.ctx})
-
     event_data = %{reason: reason, now_ms: Utils.now_ms()}
-    Output.Server.emit({:pipeline_failed, state.pipeline_id, event_data})
+    Output.Server.emit_sync({:pipeline_failed, state.pipeline_id, event_data})
+    notify_owner(state, {:error, reason, state.ctx})
 
     {:stop, {:shutdown, :stopped}, :ok, state}
   end
@@ -87,9 +86,10 @@ defmodule Crank.Pipeline.Server do
         {:DOWN, owner_ref, :process, _pid, reason},
         %{owner_ref: owner_ref} = state
       ) do
-    stop_reason = {:stopped, {:owner_down, reason}}
+    normalized_reason = if reason == :noproc, do: :normal, else: reason
+    stop_reason = {:stopped, {:owner_down, normalized_reason}}
     event_data = %{reason: stop_reason, now_ms: Utils.now_ms()}
-    Output.Server.emit({:pipeline_failed, state.pipeline_id, event_data})
+    Output.Server.emit_sync({:pipeline_failed, state.pipeline_id, event_data})
 
     {:stop, {:shutdown, :owner_down}, state}
   end
@@ -164,10 +164,9 @@ defmodule Crank.Pipeline.Server do
   end
 
   defp stop_pipeline(state, reason, shutdown_reason) do
-    notify_owner(state, {:error, reason, state.ctx})
-
     event_data = %{reason: reason, now_ms: Utils.now_ms()}
-    Output.Server.emit({:pipeline_failed, state.pipeline_id, event_data})
+    Output.Server.emit_sync({:pipeline_failed, state.pipeline_id, event_data})
+    notify_owner(state, {:error, reason, state.ctx})
 
     {:stop, shutdown_reason, state}
   end

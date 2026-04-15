@@ -24,6 +24,7 @@ defmodule Crank.TmpDirTest do
 
       assert_receive {:dir, dir}
       assert File.dir?(dir)
+      assert Path.basename(dir) =~ ~r/^[0-9a-f]{8}$/
       assert {:ok, _} = await_pipeline(pid)
       assert File.dir?(dir)
     end
@@ -65,6 +66,28 @@ defmodule Crank.TmpDirTest do
       assert_receive {:dirs, dir1, dir2, dir3, dir4}
       assert dir1 != dir2
       assert dir3 != dir4
+      assert {:ok, _} = await_pipeline(pid)
+    end
+
+    test "tmp_dir! can ensure child directories exist" do
+      test_pid = self()
+
+      {:ok, pid} =
+        Crank.new()
+        |> Crank.step("s1", fn _ctx, _run_opts ->
+          dir = Crank.tmp_dir!({:transient, ensure_dirs: ["src", "lib/vm", "c_src"]})
+          src_dir = Path.join(dir, "src")
+          vm_dir = Path.join(dir, "lib/vm")
+          c_src_dir = Path.join(dir, "c_src")
+          send(test_pid, {:dirs, dir, src_dir, vm_dir, c_src_dir})
+        end)
+        |> run_pipeline()
+
+      assert_receive {:dirs, dir, src_dir, vm_dir, c_src_dir}
+      assert File.dir?(dir)
+      assert File.dir?(src_dir)
+      assert File.dir?(vm_dir)
+      assert File.dir?(c_src_dir)
       assert {:ok, _} = await_pipeline(pid)
     end
 
@@ -156,7 +179,7 @@ defmodule Crank.TmpDirTest do
     end
 
     test "sweep removes transient dirs from dead processes and dirs without metadata" do
-      stale_dir = Path.join(Crank.TmpDir.tmp_dirs_root(), "key-deadbeef")
+      stale_dir = Path.join(Crank.TmpDir.tmp_dirs_root(), "deadbeef")
       stale_file = Path.join(stale_dir, "marker")
 
       meta = %{
@@ -170,7 +193,7 @@ defmodule Crank.TmpDirTest do
       File.write!(stale_file, "hello")
       File.write!(Crank.TmpDir.metadata_path(stale_dir), JSON.encode!(meta))
 
-      orphan_dir = Path.join(Crank.TmpDir.tmp_dirs_root(), "key-orphan")
+      orphan_dir = Path.join(Crank.TmpDir.tmp_dirs_root(), "orphan")
       orphan_file = Path.join(orphan_dir, "marker")
 
       File.mkdir_p!(orphan_dir)
@@ -185,7 +208,7 @@ defmodule Crank.TmpDirTest do
     end
 
     test "sweep does not remove an expired persistent dir while the owner pid is alive" do
-      dir = Path.join(Crank.TmpDir.tmp_dirs_root(), "key-live-persistent")
+      dir = Path.join(Crank.TmpDir.tmp_dirs_root(), "live-persistent")
       marker = Path.join(dir, "marker")
 
       meta = %{
@@ -206,7 +229,7 @@ defmodule Crank.TmpDirTest do
     end
 
     test "sweep removes an expired persistent dir when the owner pid is dead" do
-      dir = Path.join(Crank.TmpDir.tmp_dirs_root(), "key-dead-persistent")
+      dir = Path.join(Crank.TmpDir.tmp_dirs_root(), "dead-persistent")
       marker = Path.join(dir, "marker")
 
       meta = %{
