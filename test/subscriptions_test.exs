@@ -73,7 +73,7 @@ defmodule Crank.SubscriptionsTest do
 
     assert_receive {:finished, 1}
     assert_receive {:started, run_pid_2, 3}
-    refute_receive {:started, _, 2}, 200
+    refute_receive {:started, _, 2}, 50
 
     send(run_pid_2, {:release, 3})
     assert_receive {:finished, 3}
@@ -94,11 +94,12 @@ defmodule Crank.SubscriptionsTest do
 
           receive do
             {:allow_run, ^value} ->
-              {:ok, pipeline_id} = Crank.run(pipeline)
-
+              pipeline_id = Crank.run(pipeline)
               send(test_pid, {:pipeline_started, value, pipeline_id})
 
-              case Crank.await(pipeline_id, :infinity) do
+              pipeline_id
+              |> Crank.await(:infinity)
+              |> case do
                 {:ok, new_ctx} -> {:ok, new_ctx}
                 {:error, _reason, _ctx} -> :ok
               end
@@ -153,26 +154,24 @@ defmodule Crank.SubscriptionsTest do
               :ignore
 
             :success ->
-              pipeline =
-                Crank.new(ctx)
-                |> Crank.step("success", fn _ctx, _opts -> {:ctx_add, %{done: true}} end)
-
-              {:ok, pipeline_id} = Crank.run(pipeline)
-
-              case Crank.await(pipeline_id, :infinity) do
+              ctx
+              |> Crank.new()
+              |> Crank.step("success", fn _ctx, _opts -> {:ctx_add, %{done: true}} end)
+              |> Crank.run()
+              |> Crank.await(:infinity)
+              |> case do
                 {:ok, new_ctx} -> {:ok, new_ctx}
                 {:error, _reason, _ctx} -> :ok
               end
 
             :fail ->
-              pipeline =
-                Crank.new(ctx)
-                |> Crank.step("partial", fn _ctx, _opts -> {:ctx_add, %{partial: true}} end)
-                |> Crank.step("boom", fn _ctx, _opts -> raise "boom" end)
-
-              {:ok, pipeline_id} = Crank.run(pipeline)
-
-              case Crank.await(pipeline_id, :infinity) do
+              ctx
+              |> Crank.new()
+              |> Crank.step("partial", fn _ctx, _opts -> {:ctx_add, %{partial: true}} end)
+              |> Crank.step("boom", fn _ctx, _opts -> raise "boom" end)
+              |> Crank.run()
+              |> Crank.await(:infinity)
+              |> case do
                 {:ok, new_ctx} -> {:ok, new_ctx}
                 {:error, _reason, _ctx} -> :ok
               end
@@ -209,11 +208,12 @@ defmodule Crank.SubscriptionsTest do
 
           receive do
             {:allow_run, ^run} ->
-              {:ok, pipeline_id} = Crank.run(pipeline)
-
+              pipeline_id = Crank.run(pipeline)
               send(test_pid, {:pipeline_started, run, pipeline_id})
 
-              case Crank.await(pipeline_id, :infinity) do
+              pipeline_id
+              |> Crank.await(:infinity)
+              |> case do
                 {:ok, new_ctx} -> {:ok, new_ctx}
                 {:error, _reason, _ctx} -> :ok
               end
@@ -286,7 +286,7 @@ defmodule Crank.SubscriptionsTest do
 
           receive do
             :allow_run ->
-              {:ok, _pipeline_id} = Crank.run(pipeline)
+              Crank.run(pipeline)
               :ok
           end
         end,
@@ -423,7 +423,7 @@ defmodule Crank.SubscriptionsTest do
       Crank.unsubscribe(subscription_ref)
     end)
 
-    Process.sleep(100)
+    wait_for_watcher_ready(watch_ref, tmp_dir)
     watched_file = Path.join(tmp_dir, "watched.txt")
     assert :ok = File.write(watched_file, "hello")
 
@@ -535,7 +535,7 @@ defmodule Crank.SubscriptionsTest do
       Crank.unsubscribe(subscription_ref)
     end)
 
-    Process.sleep(100)
+    wait_for_watcher_ready(watch_ref, tmp_dir, ext: ".txt")
 
     assert :ok = File.write(ignored_file, "nope")
     ignored_changes = collect_watch_changes(watch_ref, 500)
@@ -545,6 +545,56 @@ defmodule Crank.SubscriptionsTest do
     changed = await_watch_change(watch_ref, watched_file, 5_000)
     assert watched_file in changed
     refute ignored_file in changed
+  end
+
+  # Repeatedly writes a sentinel file and waits for the watcher to deliver an
+  # event, proving the OS-level FSEvent stream is registered. Writing in a loop
+  # is needed because the FSEvent stream may not be registered immediately after
+  # `Crank.watch/1` returns.
+  defp wait_for_watcher_ready(watch_ref, sentinel_dir, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 5_000)
+    ext = Keyword.get(opts, :ext, "")
+    test_pid = self()
+    sentinel = Path.join(sentinel_dir, "crank_sentinel_#{System.unique_integer([:positive])}#{ext}")
+
+    sub_ref =
+      Crank.subscribe(
+        "watcher readiness probe",
+        fn _ctx, signal ->
+          case signal do
+            {:watch, %{watch: ^watch_ref, changed: changed}} when is_list(changed) ->
+              if sentinel in changed, do: send(test_pid, {:sentinel_seen, watch_ref})
+
+            _ ->
+              :ok
+          end
+
+          :ok
+        end,
+        on_failure: :continue
+      )
+
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_for_watcher_ready(watch_ref, sentinel, deadline)
+
+    File.rm(sentinel)
+    Crank.unsubscribe(sub_ref)
+  end
+
+  defp do_wait_for_watcher_ready(watch_ref, sentinel, deadline) do
+    File.write!(sentinel, to_string(System.monotonic_time()))
+
+    receive do
+      {:sentinel_seen, ^watch_ref} ->
+        :ok
+    after
+      50 ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          flunk("watcher for #{inspect(watch_ref)} never became ready")
+        else
+          do_wait_for_watcher_ready(watch_ref, sentinel, deadline)
+        end
+    end
   end
 
   defp lookup_subscription_pid(subscription_ref) do

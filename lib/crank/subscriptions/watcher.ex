@@ -13,7 +13,9 @@ defmodule Crank.Subscriptions.Watcher do
     ref = Map.fetch!(args, :ref)
     paths = path_specs |> Enum.map(& &1.path) |> Enum.uniq()
 
-    case FileSystem.start_link(dirs: paths) do
+    extra_opts = Application.get_env(:crank, :file_system_opts, [])
+
+    case FileSystem.start_link([dirs: paths] ++ extra_opts) do
       {:ok, watcher_pid} ->
         :ok = FileSystem.subscribe(watcher_pid)
         {:ok, _} = Registry.register(Crank.Subscriptions.WatcherRegistry, ref, nil)

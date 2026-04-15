@@ -22,7 +22,7 @@ defmodule Crank do
     {pipeline, subscriber_pid} = prepare_pipeline_for_run(pipeline)
     {:ok, pipeline_id} = Pipeline.start_pipeline(pipeline, owner: self())
     maybe_send_pipeline_id(subscriber_pid, pipeline_id)
-    {:ok, pipeline_id}
+    pipeline_id
   end
 
   def await(pipeline_id_or_ids, timeout \\ 5_000)
@@ -45,6 +45,8 @@ defmodule Crank do
       {:error, :noproc} -> :ok
     end
   end
+
+  defdelegate with_cache(run_opts, name, key, opts), to: Crank.Cache
 
   def notify(signal), do: Dispatcher.notify(signal)
 

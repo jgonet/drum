@@ -4,9 +4,15 @@ defmodule Crank.TmpDir do
   @metadata_file ".crank_meta.json"
 
   defp cache_dir do
-    home = System.user_home!()
-    cache = System.get_env("XDG_CACHE_HOME") || Path.join(home, ".cache")
-    Path.join(cache, "crank")
+    case Application.get_env(:crank, :cache_dir) do
+      nil ->
+        home = System.user_home!()
+        cache = System.get_env("XDG_CACHE_HOME") || Path.join(home, ".cache")
+        Path.join(cache, "crank")
+
+      dir ->
+        dir
+    end
   end
 
   def tmp_dirs_root, do: Path.join(cache_dir(), "tmp-dirs")

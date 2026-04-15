@@ -1,9 +1,11 @@
 defmodule Crank.Test.PipelineHelpers do
+  import ExUnit.Assertions
+
   def run_pipeline(%Crank.Pipeline{} = pipeline) do
     id = pipeline.id
     Crank.Output.Test.subscribe(id, self())
     ExUnit.Callbacks.on_exit(fn -> Crank.Output.Test.unsubscribe(id) end)
-    {:ok, ^id} = Crank.run(pipeline)
+    ^id = Crank.run(pipeline)
     {:ok, id}
   end
 
@@ -40,5 +42,57 @@ defmodule Crank.Test.PipelineHelpers do
         remaining -> Enum.reverse(acc)
       end
     end
+  end
+
+  # Event extraction helpers
+
+  def stdout_of(events) do
+    for {:command_stdout, _pid, %{data: d}} <- events, do: d
+  end
+
+  def stderr_of(events) do
+    for {:command_stderr, _pid, %{data: d}} <- events, do: d
+  end
+
+  def command_events(events) do
+    for {t, _, _} = event <- events, t in [:command_started, :command_finished], do: event
+  end
+
+  # Process lifecycle
+
+  def assert_process_down(pid, timeout \\ 500) do
+    ref = Process.monitor(pid)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, timeout
+  end
+
+  # Gated step — sends {tag, self()} to test_pid then blocks until release message.
+  # opts: tag: (default :step_pid), result: (default :ok), release: (default :release)
+  def gated_step(pipeline_or_name, name_or_pid, opts \\ [])
+
+  def gated_step(%Crank.Pipeline{} = pipeline, name, test_pid) do
+    Crank.Pipeline.add(pipeline, gated_step(name, test_pid, []))
+  end
+
+  def gated_step(name, test_pid, opts) do
+    tag = Keyword.get(opts, :tag, :step_pid)
+    result = Keyword.get(opts, :result, :ok)
+    release = Keyword.get(opts, :release, :release)
+
+    Crank.step(name, fn _ctx, _cmd_opts ->
+      send(test_pid, {tag, self()})
+
+      receive do
+        ^release -> result
+      end
+    end)
+  end
+
+  def gated_step(%Crank.Pipeline{} = pipeline, name, test_pid, opts) do
+    Crank.Pipeline.add(pipeline, gated_step(name, test_pid, opts))
+  end
+
+  # Cleanup helper — registers an on_exit to remove a directory
+  def register_tmpdir_cleanup(dir) do
+    ExUnit.Callbacks.on_exit(fn -> File.rm_rf!(dir) end)
   end
 end

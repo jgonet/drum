@@ -1,5 +1,6 @@
 defmodule Crank.OutputServerFailureTest do
   use ExUnit.Case, async: false
+  import Crank.Test.PipelineHelpers
 
   test "output server crash stops an active pipeline" do
     test_pid = self()
@@ -14,7 +15,7 @@ defmodule Crank.OutputServerFailureTest do
         end
       end)
 
-    {:ok, pipeline_id} = Crank.run(pipeline)
+    pipeline_id = Crank.run(pipeline)
     pipeline_pid = Crank.Registry.lookup_pipeline(pipeline_id)
 
     assert is_pid(pipeline_pid)
@@ -30,8 +31,4 @@ defmodule Crank.OutputServerFailureTest do
     assert {:error, :timeout} = Crank.await(pipeline_id, 0)
   end
 
-  defp assert_process_down(pid, timeout \\ 1_000) do
-    ref = Process.monitor(pid)
-    assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, timeout
-  end
 end

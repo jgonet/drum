@@ -64,12 +64,10 @@ defmodule Crank.CacheTest do
     test "cache miss publishes only after miss succeeds", %{scope: scope} do
       key = unique_key("publish")
       entry_dir = cache_entry_dir(scope, "compile", key)
-      cleanup_entry_dir(entry_dir)
+      register_tmpdir_cleanup(entry_dir)
 
       assert {:miss, ^entry_dir} =
-               Crank.Cache.with_cache(%{}, "compile", key,
-                 scope: scope,
-                 ttl: @ttl,
+               run_cache(scope, key,
                  miss: fn dir ->
                    send(self(), {:miss, dir})
                    assert dir == entry_dir
@@ -93,13 +91,11 @@ defmodule Crank.CacheTest do
     test "cache hit calls only restore and bumps ttl", %{scope: scope, restore_root: restore_root} do
       key = unique_key("hit")
       entry_dir = cache_entry_dir(scope, "compile", key)
-      cleanup_entry_dir(entry_dir)
-      initial_ttl = {1, :second}
+      register_tmpdir_cleanup(entry_dir)
 
       assert {:miss, ^entry_dir} =
-               Crank.Cache.with_cache(%{}, "compile", key,
-                 scope: scope,
-                 ttl: initial_ttl,
+               run_cache(scope, key,
+                 ttl: {1, :second},
                  miss: fn dir ->
                    send(self(), {:miss, dir})
                    File.write!(Path.join(dir, "artifact"), "built")
@@ -117,9 +113,7 @@ defmodule Crank.CacheTest do
       restored_path = Path.join(restore_root, "artifact")
 
       assert {:restore, ^entry_dir} =
-               Crank.Cache.with_cache(%{}, "compile", key,
-                 scope: scope,
-                 ttl: @ttl,
+               run_cache(scope, key,
                  miss: fn _dir ->
                    send(self(), :miss_called_again)
                  end,
@@ -143,8 +137,8 @@ defmodule Crank.CacheTest do
       first_dir = cache_entry_dir(scope, "compile", first_key)
       second_dir = cache_entry_dir(scope, "compile", second_key)
 
-      cleanup_entry_dir(first_dir)
-      cleanup_entry_dir(second_dir)
+      register_tmpdir_cleanup(first_dir)
+      register_tmpdir_cleanup(second_dir)
 
       refute first_dir == second_dir
     end
@@ -152,12 +146,10 @@ defmodule Crank.CacheTest do
     test "expired entry skips restore and rebuilds", %{scope: scope} do
       key = unique_key("expired")
       entry_dir = cache_entry_dir(scope, "compile", key)
-      cleanup_entry_dir(entry_dir)
+      register_tmpdir_cleanup(entry_dir)
 
       assert {:miss, ^entry_dir} =
-               Crank.Cache.with_cache(%{}, "compile", key,
-                 scope: scope,
-                 ttl: @ttl,
+               run_cache(scope, key,
                  miss: fn dir ->
                    File.write!(Path.join(dir, "artifact"), "stale")
                  end,
@@ -169,9 +161,7 @@ defmodule Crank.CacheTest do
       assert :ok = Crank.TmpDir.update_ttl(entry_dir, {0, :ms})
 
       assert {:miss, ^entry_dir} =
-               Crank.Cache.with_cache(%{}, "compile", key,
-                 scope: scope,
-                 ttl: @ttl,
+               run_cache(scope, key,
                  miss: fn dir ->
                    send(self(), {:rebuilt, dir})
                    assert not File.exists?(Path.join(dir, "artifact"))
@@ -190,12 +180,10 @@ defmodule Crank.CacheTest do
     test "failed miss stays expired and is never treated as a hit", %{scope: scope} do
       key = unique_key("failed-miss")
       entry_dir = cache_entry_dir(scope, "compile", key)
-      cleanup_entry_dir(entry_dir)
+      register_tmpdir_cleanup(entry_dir)
 
       assert_raise RuntimeError, "boom", fn ->
-        Crank.Cache.with_cache(%{}, "compile", key,
-          scope: scope,
-          ttl: @ttl,
+        run_cache(scope, key,
           miss: fn dir ->
             File.write!(Path.join(dir, "partial"), "leftover")
             raise "boom"
@@ -210,9 +198,7 @@ defmodule Crank.CacheTest do
       assert metadata["expires_at"] <= System.system_time(:millisecond)
 
       assert {:miss, ^entry_dir} =
-               Crank.Cache.with_cache(%{}, "compile", key,
-                 scope: scope,
-                 ttl: @ttl,
+               run_cache(scope, key,
                  miss: fn dir ->
                    send(self(), {:retry_miss, dir})
                    assert not File.exists?(Path.join(dir, "partial"))
@@ -234,12 +220,10 @@ defmodule Crank.CacheTest do
     } do
       key = unique_key("restore-retry")
       entry_dir = cache_entry_dir(scope, "compile", key)
-      cleanup_entry_dir(entry_dir)
+      register_tmpdir_cleanup(entry_dir)
 
       assert {:miss, ^entry_dir} =
-               Crank.Cache.with_cache(%{}, "compile", key,
-                 scope: scope,
-                 ttl: @ttl,
+               run_cache(scope, key,
                  miss: fn dir ->
                    File.write!(Path.join(dir, "artifact"), "published")
                  end,
@@ -251,9 +235,7 @@ defmodule Crank.CacheTest do
       refute_received :unexpected_restore
 
       assert_raise RuntimeError, "corrupt restore", fn ->
-        Crank.Cache.with_cache(%{}, "compile", key,
-          scope: scope,
-          ttl: @ttl,
+        run_cache(scope, key,
           miss: fn _dir ->
             send(self(), :retry_miss)
           end,
@@ -270,9 +252,7 @@ defmodule Crank.CacheTest do
       restored_path = Path.join(restore_root, "artifact")
 
       assert {:restore, ^entry_dir} =
-               Crank.Cache.with_cache(%{}, "compile", key,
-                 scope: scope,
-                 ttl: @ttl,
+               run_cache(scope, key,
                  miss: fn _dir ->
                    flunk("expected cache hit")
                  end,
@@ -290,12 +270,12 @@ defmodule Crank.CacheTest do
     } do
       key = unique_key("pipeline-failure")
       entry_dir = cache_entry_dir(scope, "compile", key)
-      cleanup_entry_dir(entry_dir)
+      register_tmpdir_cleanup(entry_dir)
 
       {:ok, pipeline_id} =
         Crank.new(%{scope: scope, key: key})
         |> Crank.step("publish", fn ctx, run_opts ->
-          Crank.Cache.with_cache(run_opts, "compile", ctx.key,
+          Crank.with_cache(run_opts, "compile", ctx.key,
             scope: ctx.scope,
             ttl: @ttl,
             miss: fn dir ->
@@ -316,9 +296,7 @@ defmodule Crank.CacheTest do
       restored_path = Path.join(restore_root, "artifact")
 
       assert {:restore, ^entry_dir} =
-               Crank.Cache.with_cache(%{}, "compile", key,
-                 scope: scope,
-                 ttl: @ttl,
+               run_cache(scope, key,
                  miss: fn _dir ->
                    flunk("expected published cache entry to remain valid")
                  end,
@@ -346,7 +324,8 @@ defmodule Crank.CacheTest do
     |> Crank.TmpDir.path_for_key()
   end
 
-  defp cleanup_entry_dir(entry_dir) do
-    ExUnit.Callbacks.on_exit(fn -> File.rm_rf!(entry_dir) end)
+  defp run_cache(scope, key, opts) do
+    {ttl, rest} = Keyword.pop(opts, :ttl, @ttl)
+    Crank.Cache.with_cache(%{}, "compile", key, [scope: scope, ttl: ttl] ++ rest)
   end
 end
