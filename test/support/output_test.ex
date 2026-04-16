@@ -1,8 +1,8 @@
-defmodule Crank.Output.Test do
+defmodule Drum.Output.Test do
   @moduledoc false
-  @behaviour Crank.Output
+  @behaviour Drum.Output
 
-  @table :crank_test_events
+  @table :drum_test_events
 
   def subscribe(pipeline_id, pid) do
     :ets.insert(@table, {pipeline_id, pid})
@@ -26,7 +26,7 @@ defmodule Crank.Output.Test do
     pipeline_id = elem(event, 1)
 
     for {_id, pid} <- :ets.lookup(@table, pipeline_id) do
-      send(pid, {:crank_event, event})
+      send(pid, {:drum_event, event})
     end
 
     state

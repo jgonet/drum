@@ -1,7 +1,7 @@
-defmodule Crank.CacheTest do
+defmodule Drum.CacheTest do
   use ExUnit.Case, async: true
 
-  import Crank.Test.PipelineHelpers
+  import Drum.Test.PipelineHelpers
 
   @ttl {1, :day}
   @moduletag :tmp_dir
@@ -21,8 +21,8 @@ defmodule Crank.CacheTest do
       write_file(scope, "lib/example.ex", "IO.puts(:ok)\n")
       write_file(scope, "mix.exs", "defmodule Example.MixProject do end\n")
 
-      first_key = Crank.Cache.hash_files(["lib/**/*.ex", "mix.exs"], base: scope)
-      second_key = Crank.Cache.hash_files(["lib/**/*.ex", "mix.exs"], base: scope)
+      first_key = Drum.Cache.hash_files(["lib/**/*.ex", "mix.exs"], base: scope)
+      second_key = Drum.Cache.hash_files(["lib/**/*.ex", "mix.exs"], base: scope)
 
       assert first_key == second_key
     end
@@ -30,11 +30,11 @@ defmodule Crank.CacheTest do
     test "different file contents produce different keys", %{scope: scope} do
       write_file(scope, "lib/example.ex", "IO.puts(:one)\n")
 
-      first_key = Crank.Cache.hash_files(["lib/**/*.ex"], base: scope)
+      first_key = Drum.Cache.hash_files(["lib/**/*.ex"], base: scope)
 
       write_file(scope, "lib/example.ex", "IO.puts(:two)\n")
 
-      second_key = Crank.Cache.hash_files(["lib/**/*.ex"], base: scope)
+      second_key = Drum.Cache.hash_files(["lib/**/*.ex"], base: scope)
 
       refute first_key == second_key
     end
@@ -42,10 +42,10 @@ defmodule Crank.CacheTest do
     test "duplicate matches across globs are deduped", %{scope: scope} do
       write_file(scope, "lib/example.ex", "IO.puts(:ok)\n")
 
-      first_key = Crank.Cache.hash_files(["lib/**/*.ex"], base: scope)
+      first_key = Drum.Cache.hash_files(["lib/**/*.ex"], base: scope)
 
       second_key =
-        Crank.Cache.hash_files(["lib/**/*.ex", "lib/example.ex"], base: scope)
+        Drum.Cache.hash_files(["lib/**/*.ex", "lib/example.ex"], base: scope)
 
       assert first_key == second_key
     end
@@ -55,7 +55,7 @@ defmodule Crank.CacheTest do
       File.mkdir_p!(Path.join(scope, "empty"))
 
       assert_raise ArgumentError, ~r/matched no regular files/, fn ->
-        Crank.Cache.hash_files(["lib/**/*.ex", "empty/*"], base: scope)
+        Drum.Cache.hash_files(["lib/**/*.ex", "empty/*"], base: scope)
       end
     end
   end
@@ -71,7 +71,7 @@ defmodule Crank.CacheTest do
                  miss: fn dir ->
                    send(self(), {:miss, dir})
                    assert dir == entry_dir
-                   assert {:ok, metadata} = Crank.TmpDir.read_metadata(dir)
+                   assert {:ok, metadata} = Drum.TmpDir.read_metadata(dir)
                    assert is_integer(metadata["expires_at"])
                    assert metadata["expires_at"] <= System.system_time(:millisecond)
                    File.write!(Path.join(dir, "artifact"), "built")
@@ -83,7 +83,7 @@ defmodule Crank.CacheTest do
 
       assert_received {:miss, ^entry_dir}
       refute_received :restore_called
-      assert {:ok, metadata} = Crank.TmpDir.read_metadata(entry_dir)
+      assert {:ok, metadata} = Drum.TmpDir.read_metadata(entry_dir)
       assert metadata["expires_at"] > System.system_time(:millisecond)
       assert "built" = File.read!(Path.join(entry_dir, "artifact"))
     end
@@ -107,7 +107,7 @@ defmodule Crank.CacheTest do
 
       assert_received {:miss, ^entry_dir}
       refute_received :restore_called
-      assert {:ok, before_restore_metadata} = Crank.TmpDir.read_metadata(entry_dir)
+      assert {:ok, before_restore_metadata} = Drum.TmpDir.read_metadata(entry_dir)
       before_restore_expires_at = before_restore_metadata["expires_at"]
 
       restored_path = Path.join(restore_root, "artifact")
@@ -125,7 +125,7 @@ defmodule Crank.CacheTest do
 
       refute_received :miss_called_again
       assert_received {:restore, ^entry_dir}
-      assert {:ok, after_restore_metadata} = Crank.TmpDir.read_metadata(entry_dir)
+      assert {:ok, after_restore_metadata} = Drum.TmpDir.read_metadata(entry_dir)
       assert after_restore_metadata["expires_at"] > before_restore_expires_at
       assert "built" = File.read!(restored_path)
     end
@@ -158,7 +158,7 @@ defmodule Crank.CacheTest do
                  end
                )
 
-      assert :ok = Crank.TmpDir.update_ttl(entry_dir, {0, :ms})
+      assert :ok = Drum.TmpDir.update_ttl(entry_dir, {0, :ms})
 
       assert {:miss, ^entry_dir} =
                run_cache(scope, key,
@@ -194,7 +194,7 @@ defmodule Crank.CacheTest do
         )
       end
 
-      assert {:ok, metadata} = Crank.TmpDir.read_metadata(entry_dir)
+      assert {:ok, metadata} = Drum.TmpDir.read_metadata(entry_dir)
       assert metadata["expires_at"] <= System.system_time(:millisecond)
 
       assert {:miss, ^entry_dir} =
@@ -273,9 +273,9 @@ defmodule Crank.CacheTest do
       register_tmpdir_cleanup(entry_dir)
 
       {:ok, pipeline_id} =
-        Crank.new(%{scope: scope, key: key})
-        |> Crank.step("publish", fn ctx, run_opts ->
-          Crank.with_cache(run_opts, "compile", ctx.key,
+        Drum.new(%{scope: scope, key: key})
+        |> Drum.step("publish", fn ctx, run_opts ->
+          Drum.with_cache(run_opts, "compile", ctx.key,
             scope: ctx.scope,
             ttl: @ttl,
             miss: fn dir ->
@@ -286,7 +286,7 @@ defmodule Crank.CacheTest do
             end
           )
         end)
-        |> Crank.step("fail", fn _ctx, _run_opts ->
+        |> Drum.step("fail", fn _ctx, _run_opts ->
           raise "later failure"
         end)
         |> run_pipeline()
@@ -321,11 +321,11 @@ defmodule Crank.CacheTest do
 
   defp cache_entry_dir(scope, name, key) do
     {:cache, Path.expand(scope), name, key}
-    |> Crank.TmpDir.path_for_key()
+    |> Drum.TmpDir.path_for_key()
   end
 
   defp run_cache(scope, key, opts) do
     {ttl, rest} = Keyword.pop(opts, :ttl, @ttl)
-    Crank.Cache.with_cache(%{}, "compile", key, [scope: scope, ttl: ttl] ++ rest)
+    Drum.Cache.with_cache(%{}, "compile", key, [scope: scope, ttl: ttl] ++ rest)
   end
 end

@@ -1,17 +1,17 @@
-defmodule Crank.OutputServerFailureTest do
+defmodule Drum.OutputServerFailureTest do
   use ExUnit.Case, async: false
-  import Crank.Test.PipelineHelpers
+  import Drum.Test.PipelineHelpers
 
   setup do
-    wait_for_process(Crank.Registry)
-    wait_for_process(Crank.Output.Server)
-    wait_for_process(Crank.PipelinesSup)
-    wait_for_process(Crank.Subscriptions.RunRegistry)
+    wait_for_process(Drum.Registry)
+    wait_for_process(Drum.Output.Server)
+    wait_for_process(Drum.PipelinesSup)
+    wait_for_process(Drum.Subscriptions.RunRegistry)
     :ok
   end
 
   defmodule ShutdownProbe do
-    @behaviour Crank.Output
+    @behaviour Drum.Output
 
     def init(opts) do
       %{notify: Keyword.fetch!(opts, :notify)}
@@ -29,8 +29,8 @@ defmodule Crank.OutputServerFailureTest do
     test_pid = self()
 
     pipeline =
-      Crank.new()
-      |> Crank.step("wait", fn _ctx, _opts ->
+      Drum.new()
+      |> Drum.step("wait", fn _ctx, _opts ->
         send(test_pid, {:step_pid, self()})
 
         receive do
@@ -38,20 +38,20 @@ defmodule Crank.OutputServerFailureTest do
         end
       end)
 
-    pipeline_id = Crank.run(pipeline)
-    pipeline_pid = Crank.Registry.lookup_pipeline(pipeline_id)
+    pipeline_id = Drum.run(pipeline)
+    pipeline_pid = Drum.Registry.lookup_pipeline(pipeline_id)
 
     assert is_pid(pipeline_pid)
     assert_receive {:step_pid, step_pid}
 
-    output_pid = Process.whereis(Crank.Output.Server)
+    output_pid = Process.whereis(Drum.Output.Server)
     output_ref = Process.monitor(output_pid)
     Process.exit(output_pid, :kill)
 
     assert_receive {:DOWN, ^output_ref, :process, ^output_pid, :killed}
     assert_process_down(step_pid)
     assert_process_down(pipeline_pid)
-    assert {:error, :timeout} = Crank.await(pipeline_id, 0)
+    assert {:error, :timeout} = Drum.await(pipeline_id, 0)
   end
 
   test "output server traps exits and calls the adapter terminate hook on supervisor shutdown" do
@@ -59,7 +59,7 @@ defmodule Crank.OutputServerFailureTest do
       id: :test_output_server,
       restart: :temporary,
       start:
-        {GenServer, :start_link, [Crank.Output.Server, {ShutdownProbe, [notify: self()]}, []]},
+        {GenServer, :start_link, [Drum.Output.Server, {ShutdownProbe, [notify: self()]}, []]},
       type: :worker
     }
 
@@ -77,31 +77,31 @@ defmodule Crank.OutputServerFailureTest do
     test_pid = self()
 
     pipeline_id =
-      gated_step(Crank.new(), "wait", test_pid)
-      |> Crank.run()
+      gated_step(Drum.new(), "wait", test_pid)
+      |> Drum.run()
 
-    Crank.Output.Test.subscribe(pipeline_id, self())
+    Drum.Output.Test.subscribe(pipeline_id, self())
 
     on_exit(fn ->
-      Crank.Output.Test.unsubscribe(pipeline_id)
+      Drum.Output.Test.unsubscribe(pipeline_id)
       resume_output_server()
     end)
 
     assert_receive {:step_pid, step_pid}
-    :ok = :sys.suspend(Crank.Output.Server)
+    :ok = :sys.suspend(Drum.Output.Server)
     send(step_pid, :release)
 
-    assert {:error, :timeout} = Crank.await(pipeline_id, 50)
+    assert {:error, :timeout} = Drum.await(pipeline_id, 50)
 
-    :ok = :sys.resume(Crank.Output.Server)
+    :ok = :sys.resume(Drum.Output.Server)
 
-    assert {:ok, %{}} = Crank.await(pipeline_id, 5_000)
-    assert_received {:crank_event, {:step_finished, ^pipeline_id, _data}}
-    assert_received {:crank_event, {:pipeline_finished, ^pipeline_id, _data}}
+    assert {:ok, %{}} = Drum.await(pipeline_id, 5_000)
+    assert_received {:drum_event, {:step_finished, ^pipeline_id, _data}}
+    assert_received {:drum_event, {:pipeline_finished, ^pipeline_id, _data}}
   end
 
   defp resume_output_server do
-    :sys.resume(Crank.Output.Server)
+    :sys.resume(Drum.Output.Server)
     :ok
   catch
     :exit, _reason -> :ok

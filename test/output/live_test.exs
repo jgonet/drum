@@ -1,7 +1,7 @@
-defmodule Crank.Output.LiveTest do
+defmodule Drum.Output.LiveTest do
   use ExUnit.Case, async: true
 
-  alias Crank.Output.Live
+  alias Drum.Output.Live
 
   test "format_relative_age/2 buckets time without churn" do
     assert Live.format_relative_age(nil, 0) == "never"
@@ -120,7 +120,7 @@ defmodule Crank.Output.LiveTest do
 
   test "render_dashboard/2 rolls managed tmp watch paths onto separate lines" do
     watch_ref = make_ref()
-    tmp_dir = Path.join(Crank.TmpDir.tmp_dirs_root(), "0b9d18e7")
+    tmp_dir = Path.join(Drum.TmpDir.tmp_dirs_root(), "0b9d18e7")
 
     state = %{
       Live.init([])

@@ -1,20 +1,20 @@
-defmodule Crank.SubscriptionsTest do
+defmodule Drum.SubscriptionsTest do
   use ExUnit.Case, async: false
 
-  alias Crank.Subscriptions.PathSpec
+  alias Drum.Subscriptions.PathSpec
 
   test "notify/1 delivers plain signals to subscribers" do
     test_pid = self()
 
     subscription_ref =
-      Crank.subscribe("plain notify", fn ctx, {:build_finished, %{exit_code: exit_code}} ->
+      Drum.subscribe("plain notify", fn ctx, {:build_finished, %{exit_code: exit_code}} ->
         send(test_pid, {:signal, ctx, exit_code})
         :ok
       end)
 
-    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+    on_exit(fn -> Drum.unsubscribe(subscription_ref) end)
 
-    assert :ok = Crank.notify({:build_finished, %{exit_code: 0}})
+    assert :ok = Drum.notify({:build_finished, %{exit_code: 0}})
     assert_receive {:signal, %{}, 0}
   end
 
@@ -23,7 +23,7 @@ defmodule Crank.SubscriptionsTest do
     watch_ref = make_ref()
 
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "watch run count",
         fn _ctx, {:watch, %{watch: ref, changed: changed, run_n: run_n}} ->
           send(test_pid, {:watch_signal, ref, changed, run_n})
@@ -32,14 +32,14 @@ defmodule Crank.SubscriptionsTest do
         on_failure: :continue
       )
 
-    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+    on_exit(fn -> Drum.unsubscribe(subscription_ref) end)
 
     first_signal = {:watch, %{changed: ["app.ts"], watch: watch_ref}}
-    assert :ok = Crank.notify(first_signal)
+    assert :ok = Drum.notify(first_signal)
     assert_receive {:watch_signal, ^watch_ref, ["app.ts"], 1}
 
     second_signal = {:watch, %{changed: ["app.ts"], watch: watch_ref}}
-    assert :ok = Crank.notify(second_signal)
+    assert :ok = Drum.notify(second_signal)
     assert_receive {:watch_signal, ^watch_ref, ["app.ts"], 2}
   end
 
@@ -47,7 +47,7 @@ defmodule Crank.SubscriptionsTest do
     test_pid = self()
 
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "ctx persistence",
         fn ctx, {:tick, %{count: count}} ->
           total = Map.get(ctx, :count, 0) + count
@@ -57,12 +57,12 @@ defmodule Crank.SubscriptionsTest do
         base_context: %{count: 1}
       )
 
-    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+    on_exit(fn -> Drum.unsubscribe(subscription_ref) end)
 
-    assert :ok = Crank.notify({:tick, %{count: 2}})
+    assert :ok = Drum.notify({:tick, %{count: 2}})
     assert_receive {:count, 3}
 
-    assert :ok = Crank.notify({:tick, %{count: 5}})
+    assert :ok = Drum.notify({:tick, %{count: 5}})
     assert_receive {:count, 8}
   end
 
@@ -70,7 +70,7 @@ defmodule Crank.SubscriptionsTest do
     test_pid = self()
 
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "coalesce latest",
         fn _ctx, {:tick, %{value: value}} ->
           send(test_pid, {:started, self(), value})
@@ -86,13 +86,13 @@ defmodule Crank.SubscriptionsTest do
         rerun: :wait
       )
 
-    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+    on_exit(fn -> Drum.unsubscribe(subscription_ref) end)
 
-    assert :ok = Crank.notify({:tick, %{value: 1}})
+    assert :ok = Drum.notify({:tick, %{value: 1}})
     assert_receive {:started, run_pid_1, 1}
 
-    assert :ok = Crank.notify({:tick, %{value: 2}})
-    assert :ok = Crank.notify({:tick, %{value: 3}})
+    assert :ok = Drum.notify({:tick, %{value: 2}})
+    assert :ok = Drum.notify({:tick, %{value: 3}})
 
     send(run_pid_1, {:release, 1})
 
@@ -108,7 +108,7 @@ defmodule Crank.SubscriptionsTest do
     test_pid = self()
 
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "awaitable subscription",
         fn ctx, signal ->
           case signal do
@@ -125,38 +125,38 @@ defmodule Crank.SubscriptionsTest do
         rerun: :wait
       )
 
-    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+    on_exit(fn -> Drum.unsubscribe(subscription_ref) end)
 
-    assert :ok = Crank.notify({:other, %{}})
-    assert {:error, :timeout} = Crank.await(subscription_ref, 0)
+    assert :ok = Drum.notify({:other, %{}})
+    assert {:error, :timeout} = Drum.await(subscription_ref, 0)
 
-    assert :ok = Crank.notify({:tick, %{value: 1}})
+    assert :ok = Drum.notify({:tick, %{value: 1}})
     assert_receive {:ctx, %{value: 1}}
-    assert {:error, :timeout} = Crank.await(subscription_ref, 0)
+    assert {:error, :timeout} = Drum.await(subscription_ref, 0)
 
-    assert :ok = Crank.notify({:tick, %{value: 2}})
+    assert :ok = Drum.notify({:tick, %{value: 2}})
     assert_receive {:ctx, %{value: 2}}
-    assert {:error, :timeout} = Crank.await(subscription_ref, 0)
+    assert {:error, :timeout} = Drum.await(subscription_ref, 0)
 
     Task.start(fn ->
       Process.sleep(50)
-      Crank.unsubscribe(subscription_ref)
+      Drum.unsubscribe(subscription_ref)
     end)
 
-    assert {:ok, %{value: 2}} = Crank.await(subscription_ref, 5_000)
-    assert {:error, :timeout} = Crank.await(subscription_ref, 0)
+    assert {:ok, %{value: 2}} = Drum.await(subscription_ref, 5_000)
+    assert {:error, :timeout} = Drum.await(subscription_ref, 0)
   end
 
   test "subscribe/3 can stop itself with the final ctx from a controlled pipeline" do
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "self stopping subscription",
         fn ctx, {:tick, %{value: value}} ->
           ctx
-          |> Crank.new()
-          |> Crank.step("record value", fn _ctx, _opts -> {:ctx_add, %{value: value}} end)
-          |> Crank.run()
-          |> Crank.await(:infinity)
+          |> Drum.new()
+          |> Drum.step("record value", fn _ctx, _opts -> {:ctx_add, %{value: value}} end)
+          |> Drum.run()
+          |> Drum.await(:infinity)
           |> case do
             {:ok, new_ctx} -> {:stop, new_ctx}
             {:error, _reason, _ctx} -> :ok
@@ -166,22 +166,22 @@ defmodule Crank.SubscriptionsTest do
         on_failure: :continue
       )
 
-    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+    on_exit(fn -> Drum.unsubscribe(subscription_ref) end)
 
     subscriber_pid = lookup_subscription_pid(subscription_ref)
     subscriber_ref = Process.monitor(subscriber_pid)
 
-    assert :ok = Crank.notify({:tick, %{value: 2}})
-    assert {:ok, %{count: 1, value: 2}} = Crank.await(subscription_ref, 5_000)
+    assert :ok = Drum.notify({:tick, %{value: 2}})
+    assert {:ok, %{count: 1, value: 2}} = Drum.await(subscription_ref, 5_000)
     assert_receive {:DOWN, ^subscriber_ref, :process, ^subscriber_pid, :normal}, 5_000
-    assert {:error, :timeout} = Crank.await(subscription_ref, 0)
+    assert {:error, :timeout} = Drum.await(subscription_ref, 0)
   end
 
   test "subscribe/3 can stop after draining the queued signal" do
     test_pid = self()
 
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "draining stop",
         fn ctx, {:tick, %{value: value}} ->
           seen = Map.get(ctx, :seen, [])
@@ -203,21 +203,21 @@ defmodule Crank.SubscriptionsTest do
         rerun: :wait
       )
 
-    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+    on_exit(fn -> Drum.unsubscribe(subscription_ref) end)
 
     subscriber_pid = lookup_subscription_pid(subscription_ref)
     subscriber_ref = Process.monitor(subscriber_pid)
 
-    assert :ok = Crank.notify({:tick, %{value: 1}})
+    assert :ok = Drum.notify({:tick, %{value: 1}})
     assert_receive {:run, 1, [], run_pid_1}, 5_000
 
-    assert :ok = Crank.notify({:tick, %{value: 2}})
-    assert {:error, :timeout} = Crank.await(subscription_ref, 0)
+    assert :ok = Drum.notify({:tick, %{value: 2}})
+    assert {:error, :timeout} = Drum.await(subscription_ref, 0)
 
     send(run_pid_1, :release_first)
 
     assert_receive {:run, 2, [1], _run_pid_2}, 5_000
-    assert {:ok, %{seen: [1, 2]}} = Crank.await(subscription_ref, 5_000)
+    assert {:ok, %{seen: [1, 2]}} = Drum.await(subscription_ref, 5_000)
     assert_receive {:DOWN, ^subscriber_ref, :process, ^subscriber_pid, :normal}, 5_000
   end
 
@@ -226,7 +226,7 @@ defmodule Crank.SubscriptionsTest do
     idle_ms = 100
 
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "idle stop",
         fn ctx, {:tick, %{value: value}} ->
           seen = Map.get(ctx, :seen, [])
@@ -242,19 +242,19 @@ defmodule Crank.SubscriptionsTest do
         on_failure: :continue
       )
 
-    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+    on_exit(fn -> Drum.unsubscribe(subscription_ref) end)
 
     subscriber_pid = lookup_subscription_pid(subscription_ref)
     subscriber_ref = Process.monitor(subscriber_pid)
 
-    assert :ok = Crank.notify({:tick, %{value: 1}})
+    assert :ok = Drum.notify({:tick, %{value: 1}})
     assert_receive {:run, 1, []}, 5_000
 
-    assert :ok = Crank.notify({:tick, %{value: 2}})
+    assert :ok = Drum.notify({:tick, %{value: 2}})
     assert_receive {:run, 2, [1]}, 5_000
 
-    assert {:error, :timeout} = Crank.await(subscription_ref, 20)
-    assert {:ok, %{seen: [1, 2]}} = Crank.await(subscription_ref, 5_000)
+    assert {:error, :timeout} = Drum.await(subscription_ref, 20)
+    assert {:ok, %{seen: [1, 2]}} = Drum.await(subscription_ref, 5_000)
     assert_receive {:DOWN, ^subscriber_ref, :process, ^subscriber_pid, :normal}, 5_000
   end
 
@@ -262,22 +262,22 @@ defmodule Crank.SubscriptionsTest do
     test_pid = self()
 
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "graceful rerun",
         fn ctx, {:tick, %{value: value}} ->
           pipeline =
-            Crank.new(ctx)
-            |> Crank.step("sleep", "sleep 10")
+            Drum.new(ctx)
+            |> Drum.step("sleep", "sleep 10")
 
           send(test_pid, {:planned_pipeline, value, pipeline.id, self()})
 
           receive do
             {:allow_run, ^value} ->
-              pipeline_id = Crank.run(pipeline)
+              pipeline_id = Drum.run(pipeline)
               send(test_pid, {:pipeline_started, value, pipeline_id})
 
               pipeline_id
-              |> Crank.await(:infinity)
+              |> Drum.await(:infinity)
               |> case do
                 {:ok, new_ctx} -> {:ok, new_ctx}
                 {:error, _reason, _ctx} -> :ok
@@ -288,57 +288,57 @@ defmodule Crank.SubscriptionsTest do
         rerun: {:kill, :graceful}
       )
 
-    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+    on_exit(fn -> Drum.unsubscribe(subscription_ref) end)
 
-    assert :ok = Crank.notify({:tick, %{value: 1}})
+    assert :ok = Drum.notify({:tick, %{value: 1}})
     assert_receive {:planned_pipeline, 1, pipeline_id_1, task_pid_1}
-    Crank.Output.Test.subscribe(pipeline_id_1, self())
+    Drum.Output.Test.subscribe(pipeline_id_1, self())
     send(task_pid_1, {:allow_run, 1})
     assert_receive {:pipeline_started, 1, ^pipeline_id_1}
-    assert_receive {:crank_event, {:pipeline_started, ^pipeline_id_1, _}}, 5_000
+    assert_receive {:drum_event, {:pipeline_started, ^pipeline_id_1, _}}, 5_000
 
-    assert :ok = Crank.notify({:tick, %{value: 2}})
+    assert :ok = Drum.notify({:tick, %{value: 2}})
 
-    assert_receive {:crank_event,
+    assert_receive {:drum_event,
                     {:pipeline_failed, ^pipeline_id_1, %{reason: {:stopped, :graceful}}}},
                    5_000
 
     assert_receive {:planned_pipeline, 2, pipeline_id_2, task_pid_2}, 5_000
-    Crank.Output.Test.subscribe(pipeline_id_2, self())
+    Drum.Output.Test.subscribe(pipeline_id_2, self())
     send(task_pid_2, {:allow_run, 2})
     assert_receive {:pipeline_started, 2, ^pipeline_id_2}
-    assert_receive {:crank_event, {:pipeline_started, ^pipeline_id_2, _}}, 5_000
+    assert_receive {:drum_event, {:pipeline_started, ^pipeline_id_2, _}}, 5_000
 
-    assert :ok = Crank.stop(pipeline_id_2, :graceful)
+    assert :ok = Drum.stop(pipeline_id_2, :graceful)
 
-    assert_receive {:crank_event,
+    assert_receive {:drum_event,
                     {:pipeline_failed, ^pipeline_id_2, %{reason: {:stopped, :graceful}}}},
                    5_000
 
-    Crank.Output.Test.unsubscribe(pipeline_id_1)
-    Crank.Output.Test.unsubscribe(pipeline_id_2)
+    Drum.Output.Test.unsubscribe(pipeline_id_1)
+    Drum.Output.Test.unsubscribe(pipeline_id_2)
   end
 
   test "subscriptions emit dashboard signal and restart events" do
     test_pid = self()
 
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "ui pipeline",
         fn ctx, {:tick, %{value: value}} ->
           pipeline =
-            Crank.new(ctx)
-            |> Crank.step("sleep", "sleep 10")
+            Drum.new(ctx)
+            |> Drum.step("sleep", "sleep 10")
 
           send(test_pid, {:planned_pipeline, value, pipeline.id, self()})
 
           receive do
             {:allow_run, ^value} ->
-              pipeline_id = Crank.run(pipeline)
+              pipeline_id = Drum.run(pipeline)
               send(test_pid, {:pipeline_started, value, pipeline_id})
 
               pipeline_id
-              |> Crank.await(:infinity)
+              |> Drum.await(:infinity)
               |> case do
                 {:ok, new_ctx} -> {:ok, new_ctx}
                 {:error, _reason, _ctx} -> :ok
@@ -349,16 +349,16 @@ defmodule Crank.SubscriptionsTest do
         rerun: {:kill, :graceful}
       )
 
-    Crank.Output.Test.subscribe(subscription_ref, self())
+    Drum.Output.Test.subscribe(subscription_ref, self())
 
     on_exit(fn ->
-      Crank.Output.Test.unsubscribe(subscription_ref)
-      Crank.unsubscribe(subscription_ref)
+      Drum.Output.Test.unsubscribe(subscription_ref)
+      Drum.unsubscribe(subscription_ref)
     end)
 
-    assert :ok = Crank.notify({:tick, %{value: 1}})
+    assert :ok = Drum.notify({:tick, %{value: 1}})
 
-    assert_receive {:crank_event,
+    assert_receive {:drum_event,
                     {:ui_pipeline_signal, ^subscription_ref,
                      %{pending: false, signal: {:tick, %{value: 1}}}}},
                    5_000
@@ -367,31 +367,31 @@ defmodule Crank.SubscriptionsTest do
     send(task_pid_1, {:allow_run, 1})
     assert_receive {:pipeline_started, 1, ^pipeline_id_1}, 5_000
 
-    assert_receive {:crank_event,
+    assert_receive {:drum_event,
                     {:ui_pipeline_run_started, ^subscription_ref,
                      %{pipeline_id: ^pipeline_id_1, run_n: 1}}},
                    5_000
 
-    assert :ok = Crank.notify({:tick, %{value: 2}})
+    assert :ok = Drum.notify({:tick, %{value: 2}})
 
-    assert_receive {:crank_event,
+    assert_receive {:drum_event,
                     {:ui_pipeline_signal, ^subscription_ref,
                      %{pending: true, signal: {:tick, %{value: 2}}}}},
                    5_000
 
-    assert_receive {:crank_event,
+    assert_receive {:drum_event,
                     {:ui_pipeline_restarting, ^subscription_ref,
                      %{mode: :graceful, signal: {:tick, %{value: 2}}}}},
                    5_000
 
-    assert :ok = Crank.stop(pipeline_id_1, :graceful)
+    assert :ok = Drum.stop(pipeline_id_1, :graceful)
   end
 
   test "subscribe/3 keeps the previous ctx when a pipeline run fails" do
     test_pid = self()
 
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "ctx from pipeline success only",
         fn ctx, {:tick, %{mode: mode}} ->
           send(test_pid, {:seen_ctx, mode, ctx})
@@ -402,10 +402,10 @@ defmodule Crank.SubscriptionsTest do
 
             :success ->
               ctx
-              |> Crank.new()
-              |> Crank.step("success", fn _ctx, _opts -> {:ctx_add, %{done: true}} end)
-              |> Crank.run()
-              |> Crank.await(:infinity)
+              |> Drum.new()
+              |> Drum.step("success", fn _ctx, _opts -> {:ctx_add, %{done: true}} end)
+              |> Drum.run()
+              |> Drum.await(:infinity)
               |> case do
                 {:ok, new_ctx} -> {:ok, new_ctx}
                 {:error, _reason, _ctx} -> :ok
@@ -413,11 +413,11 @@ defmodule Crank.SubscriptionsTest do
 
             :fail ->
               ctx
-              |> Crank.new()
-              |> Crank.step("partial", fn _ctx, _opts -> {:ctx_add, %{partial: true}} end)
-              |> Crank.step("boom", fn _ctx, _opts -> raise "boom" end)
-              |> Crank.run()
-              |> Crank.await(:infinity)
+              |> Drum.new()
+              |> Drum.step("partial", fn _ctx, _opts -> {:ctx_add, %{partial: true}} end)
+              |> Drum.step("boom", fn _ctx, _opts -> raise "boom" end)
+              |> Drum.run()
+              |> Drum.await(:infinity)
               |> case do
                 {:ok, new_ctx} -> {:ok, new_ctx}
                 {:error, _reason, _ctx} -> :ok
@@ -428,15 +428,15 @@ defmodule Crank.SubscriptionsTest do
         on_failure: :continue
       )
 
-    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+    on_exit(fn -> Drum.unsubscribe(subscription_ref) end)
 
-    assert :ok = Crank.notify({:tick, %{mode: :fail}})
+    assert :ok = Drum.notify({:tick, %{mode: :fail}})
     assert_receive {:seen_ctx, :fail, %{count: 1}}
 
-    assert :ok = Crank.notify({:tick, %{mode: :success}})
+    assert :ok = Drum.notify({:tick, %{mode: :success}})
     assert_receive {:seen_ctx, :success, %{count: 1}}, 5_000
 
-    assert :ok = Crank.notify({:tick, %{mode: :observe}})
+    assert :ok = Drum.notify({:tick, %{mode: :observe}})
     assert_receive {:seen_ctx, :observe, %{count: 1, done: true}}, 5_000
   end
 
@@ -444,22 +444,22 @@ defmodule Crank.SubscriptionsTest do
     test_pid = self()
 
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "meta pipeline",
         fn ctx, {:tick, %{run: run}} ->
           pipeline =
-            Crank.new(ctx)
-            |> Crank.step("meta", fn _ctx, _opts -> :ok end)
+            Drum.new(ctx)
+            |> Drum.step("meta", fn _ctx, _opts -> :ok end)
 
           send(test_pid, {:planned_pipeline, run, pipeline.id, self()})
 
           receive do
             {:allow_run, ^run} ->
-              pipeline_id = Crank.run(pipeline)
+              pipeline_id = Drum.run(pipeline)
               send(test_pid, {:pipeline_started, run, pipeline_id})
 
               pipeline_id
-              |> Crank.await(:infinity)
+              |> Drum.await(:infinity)
               |> case do
                 {:ok, new_ctx} -> {:ok, new_ctx}
                 {:error, _reason, _ctx} -> :ok
@@ -469,19 +469,19 @@ defmodule Crank.SubscriptionsTest do
         on_failure: :continue
       )
 
-    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+    on_exit(fn -> Drum.unsubscribe(subscription_ref) end)
 
-    assert :ok = Crank.notify({:tick, %{run: 1}})
+    assert :ok = Drum.notify({:tick, %{run: 1}})
     assert_receive {:planned_pipeline, 1, pipeline_id_1, task_pid_1}
-    Crank.Output.Test.subscribe(pipeline_id_1, self())
+    Drum.Output.Test.subscribe(pipeline_id_1, self())
     send(task_pid_1, {:allow_run, 1})
     assert_receive {:pipeline_started, 1, ^pipeline_id_1}
 
-    assert_receive {:crank_event,
+    assert_receive {:drum_event,
                     {:pipeline_started, ^pipeline_id_1,
                      %{
                        meta: %{
-                         crank: %{
+                         drum: %{
                            logical_id: ^subscription_ref,
                            run_n: 1,
                            subscription_name: "meta pipeline",
@@ -490,19 +490,19 @@ defmodule Crank.SubscriptionsTest do
                        }
                      }}}
 
-    Crank.Output.Test.unsubscribe(pipeline_id_1)
+    Drum.Output.Test.unsubscribe(pipeline_id_1)
 
-    assert :ok = Crank.notify({:tick, %{run: 2}})
+    assert :ok = Drum.notify({:tick, %{run: 2}})
     assert_receive {:planned_pipeline, 2, pipeline_id_2, task_pid_2}
-    Crank.Output.Test.subscribe(pipeline_id_2, self())
+    Drum.Output.Test.subscribe(pipeline_id_2, self())
     send(task_pid_2, {:allow_run, 2})
     assert_receive {:pipeline_started, 2, ^pipeline_id_2}
 
-    assert_receive {:crank_event,
+    assert_receive {:drum_event,
                     {:pipeline_started, ^pipeline_id_2,
                      %{
                        meta: %{
-                         crank: %{
+                         drum: %{
                            logical_id: ^subscription_ref,
                            run_n: 2,
                            subscription_name: "meta pipeline",
@@ -511,19 +511,19 @@ defmodule Crank.SubscriptionsTest do
                        }
                      }}}
 
-    Crank.Output.Test.unsubscribe(pipeline_id_2)
+    Drum.Output.Test.unsubscribe(pipeline_id_2)
   end
 
   test "subscription task does not hang when subscriber stops before pipeline start" do
     test_pid = self()
 
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "handshake abort",
         fn ctx, {:tick, %{}} ->
           pipeline =
-            Crank.new(ctx)
-            |> Crank.step("gated", fn _ctx, _opts ->
+            Drum.new(ctx)
+            |> Drum.step("gated", fn _ctx, _opts ->
               send(test_pid, {:step_running, self()})
 
               receive do
@@ -535,19 +535,19 @@ defmodule Crank.SubscriptionsTest do
 
           receive do
             :allow_run ->
-              Crank.run(pipeline)
+              Drum.run(pipeline)
               :ok
           end
         end,
         on_failure: :continue
       )
 
-    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+    on_exit(fn -> Drum.unsubscribe(subscription_ref) end)
 
-    assert :ok = Crank.notify({:tick, %{}})
+    assert :ok = Drum.notify({:tick, %{}})
     assert_receive {:planned_pipeline, pipeline_id, task_pid}, 5_000
-    Crank.Output.Test.subscribe(pipeline_id, self())
-    on_exit(fn -> Crank.Output.Test.unsubscribe(pipeline_id) end)
+    Drum.Output.Test.subscribe(pipeline_id, self())
+    on_exit(fn -> Drum.Output.Test.unsubscribe(pipeline_id) end)
 
     subscriber_pid = lookup_subscription_pid(subscription_ref)
     subscriber_ref = Process.monitor(subscriber_pid)
@@ -560,9 +560,9 @@ defmodule Crank.SubscriptionsTest do
 
     assert_receive {:step_running, _step_pid}, 5_000
     assert_receive {:DOWN, ^task_ref, :process, ^task_pid, :normal}, 5_000
-    assert_receive {:crank_event, {:pipeline_started, ^pipeline_id, _}}, 5_000
+    assert_receive {:drum_event, {:pipeline_started, ^pipeline_id, _}}, 5_000
 
-    assert_receive {:crank_event,
+    assert_receive {:drum_event,
                     {:pipeline_failed, ^pipeline_id,
                      %{reason: {:stopped, {:owner_down, :normal}}}}},
                    5_000
@@ -572,7 +572,7 @@ defmodule Crank.SubscriptionsTest do
     test_pid = self()
 
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "async unsubscribe",
         fn _ctx, {:tick, %{}} ->
           Process.flag(:trap_exit, true)
@@ -590,44 +590,44 @@ defmodule Crank.SubscriptionsTest do
         on_failure: :continue
       )
 
-    assert :ok = Crank.notify({:tick, %{}})
+    assert :ok = Drum.notify({:tick, %{}})
     assert_receive {:started, run_pid}, 5_000
 
     subscriber_pid = lookup_subscription_pid(subscription_ref)
     subscriber_ref = Process.monitor(subscriber_pid)
 
-    assert :ok = Crank.unsubscribe(subscription_ref)
+    assert :ok = Drum.unsubscribe(subscription_ref)
     assert_receive :cleanup_started, 5_000
-    assert {:error, :timeout} = Crank.await(subscription_ref, 0)
+    assert {:error, :timeout} = Drum.await(subscription_ref, 0)
     assert Process.alive?(subscriber_pid)
     refute_receive {:DOWN, ^subscriber_ref, :process, ^subscriber_pid, _reason}, 100
 
     send(run_pid, :finish_cleanup)
 
-    assert {:ok, %{}} = Crank.await(subscription_ref, 5_000)
+    assert {:ok, %{}} = Drum.await(subscription_ref, 5_000)
     assert_receive {:DOWN, ^subscriber_ref, :process, ^subscriber_pid, :normal}, 5_000
   end
 
   test "notify/1 raises on invalid signals" do
     assert_raise ArgumentError, fn ->
-      Crank.notify(:not_a_signal)
+      Drum.notify(:not_a_signal)
     end
   end
 
   test "subscribe/3 validates in the caller without crashing the subscription subtree" do
     assert_raise ArgumentError, fn ->
-      Crank.subscribe("invalid opts", fn _, _ -> :ok end, bogus: 1)
+      Drum.subscribe("invalid opts", fn _, _ -> :ok end, bogus: 1)
     end
 
-    assert is_pid(Process.whereis(Crank.Subscriptions.SubscriberRegistry))
-    assert is_pid(Process.whereis(Crank.Subscriptions.SubscriberSupervisor))
+    assert is_pid(Process.whereis(Drum.Subscriptions.SubscriberRegistry))
+    assert is_pid(Process.whereis(Drum.Subscriptions.SubscriberSupervisor))
   end
 
   test "subscribe/3 with on_failure :continue survives callback crashes" do
     test_pid = self()
 
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "callback crash",
         fn _ctx, {:tick, %{mode: mode}} ->
           case mode do
@@ -642,13 +642,13 @@ defmodule Crank.SubscriptionsTest do
         on_failure: :continue
       )
 
-    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+    on_exit(fn -> Drum.unsubscribe(subscription_ref) end)
 
     ExUnit.CaptureLog.capture_log(fn ->
-      assert :ok = Crank.notify({:tick, %{mode: :crash}})
+      assert :ok = Drum.notify({:tick, %{mode: :crash}})
     end)
 
-    assert :ok = Crank.notify({:tick, %{mode: :ok}})
+    assert :ok = Drum.notify({:tick, %{mode: :ok}})
     assert_receive :callback_recovered, 5_000
   end
 
@@ -656,7 +656,7 @@ defmodule Crank.SubscriptionsTest do
     test_pid = self()
 
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "invalid return continue",
         fn ctx, {:tick, %{mode: mode}} ->
           case mode do
@@ -673,19 +673,19 @@ defmodule Crank.SubscriptionsTest do
         on_failure: :continue
       )
 
-    on_exit(fn -> Crank.unsubscribe(subscription_ref) end)
+    on_exit(fn -> Drum.unsubscribe(subscription_ref) end)
 
-    assert :ok = Crank.notify({:tick, %{mode: :invalid}})
+    assert :ok = Drum.notify({:tick, %{mode: :invalid}})
     assert_receive :invalid_returned, 5_000
-    assert {:error, :timeout} = Crank.await(subscription_ref, 0)
+    assert {:error, :timeout} = Drum.await(subscription_ref, 0)
 
-    assert :ok = Crank.notify({:tick, %{mode: :ok}})
+    assert :ok = Drum.notify({:tick, %{mode: :ok}})
     assert_receive {:ctx, %{count: 1}}, 5_000
   end
 
   test "subscribe/3 with on_failure :drop stops after an invalid callback return" do
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "invalid return drop",
         fn _ctx, {:tick, %{}} ->
           :ignore
@@ -696,9 +696,9 @@ defmodule Crank.SubscriptionsTest do
     subscriber_pid = lookup_subscription_pid(subscription_ref)
     subscriber_ref = Process.monitor(subscriber_pid)
 
-    assert :ok = Crank.notify({:tick, %{}})
+    assert :ok = Drum.notify({:tick, %{}})
 
-    assert {:error, {:invalid_return, :ignore}, %{}} = Crank.await(subscription_ref, 5_000)
+    assert {:error, {:invalid_return, :ignore}, %{}} = Drum.await(subscription_ref, 5_000)
 
     assert_receive {:DOWN, ^subscriber_ref, :process, ^subscriber_pid,
                     {:subscription_failed, _, _}},
@@ -710,10 +710,10 @@ defmodule Crank.SubscriptionsTest do
     test_pid = self()
     watch_path = Path.join(tmp_dir, "*")
 
-    watch_ref = Crank.watch(watch_path)
+    watch_ref = Drum.watch(watch_path)
 
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "watch notifications",
         fn _ctx, {:watch, %{watch: ref, changed: changed}} ->
           send(test_pid, {:watch_event, ref, changed})
@@ -723,8 +723,8 @@ defmodule Crank.SubscriptionsTest do
       )
 
     on_exit(fn ->
-      Crank.unwatch(watch_ref)
-      Crank.unsubscribe(subscription_ref)
+      Drum.unwatch(watch_ref)
+      Drum.unsubscribe(subscription_ref)
     end)
 
     wait_for_watcher_ready(watch_ref, tmp_dir)
@@ -739,12 +739,12 @@ defmodule Crank.SubscriptionsTest do
   @tag :tmp_dir
   test "watchers emit dashboard update and removal events", %{tmp_dir: tmp_dir} do
     watched_file = Path.join(tmp_dir, "watched.txt")
-    watch_ref = Crank.watch(Path.join(tmp_dir, "*.txt"))
-    Crank.Output.Test.subscribe(watch_ref, self())
+    watch_ref = Drum.watch(Path.join(tmp_dir, "*.txt"))
+    Drum.Output.Test.subscribe(watch_ref, self())
 
     on_exit(fn ->
-      Crank.Output.Test.unsubscribe(watch_ref)
-      Crank.unwatch(watch_ref)
+      Drum.Output.Test.unsubscribe(watch_ref)
+      Drum.unwatch(watch_ref)
     end)
 
     wait_for_watcher_ready(watch_ref, tmp_dir, ext: ".txt")
@@ -753,9 +753,9 @@ defmodule Crank.SubscriptionsTest do
     changed = await_watcher_update(watch_ref, watched_file, 5_000)
     assert watched_file in changed
 
-    assert :ok = Crank.unwatch(watch_ref)
+    assert :ok = Drum.unwatch(watch_ref)
 
-    assert_receive {:crank_event, {:watcher_removed, ^watch_ref, %{now_ms: _}}}, 5_000
+    assert_receive {:drum_event, {:watcher_removed, ^watch_ref, %{now_ms: _}}}, 5_000
   end
 
   test "path specs treat literals as exact-only matches" do
@@ -818,7 +818,7 @@ defmodule Crank.SubscriptionsTest do
     assert_raise ArgumentError,
                  ~r/invalid watch pattern ".+\/\[broken": missing terminator/,
                  fn ->
-                   Crank.watch("/tmp/[broken")
+                   Drum.watch("/tmp/[broken")
                  end
   end
 
@@ -827,13 +827,13 @@ defmodule Crank.SubscriptionsTest do
     assert_raise ArgumentError,
                  ~r/ambiguous watch path ".+": use ".+\/\*" or ".+\/\*\*"/,
                  fn ->
-                   Crank.watch(tmp_dir)
+                   Drum.watch(tmp_dir)
                  end
 
     assert_raise ArgumentError,
                  ~r/ambiguous watch path ".+\/": use ".+\/\*" or ".+\/\*\*"/,
                  fn ->
-                   Crank.watch(tmp_dir <> "/")
+                   Drum.watch(tmp_dir <> "/")
                  end
   end
 
@@ -844,10 +844,10 @@ defmodule Crank.SubscriptionsTest do
     ignored_file = Path.join(tmp_dir, "ignored.md")
     watched_file = Path.join(tmp_dir, "watched.txt")
 
-    watch_ref = Crank.watch(watch_path)
+    watch_ref = Drum.watch(watch_path)
 
     subscription_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "glob watch notifications",
         fn _ctx, {:watch, %{watch: ref, changed: changed}} ->
           send(test_pid, {:watch_event, ref, changed})
@@ -857,8 +857,8 @@ defmodule Crank.SubscriptionsTest do
       )
 
     on_exit(fn ->
-      Crank.unwatch(watch_ref)
-      Crank.unsubscribe(subscription_ref)
+      Drum.unwatch(watch_ref)
+      Drum.unsubscribe(subscription_ref)
     end)
 
     wait_for_watcher_ready(watch_ref, tmp_dir, ext: ".txt")
@@ -876,17 +876,17 @@ defmodule Crank.SubscriptionsTest do
   # Repeatedly writes a sentinel file and waits for the watcher to deliver an
   # event, proving the OS-level FSEvent stream is registered. Writing in a loop
   # is needed because the FSEvent stream may not be registered immediately after
-  # `Crank.watch/1` returns.
+  # `Drum.watch/1` returns.
   defp wait_for_watcher_ready(watch_ref, sentinel_dir, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5_000)
     ext = Keyword.get(opts, :ext, "")
     test_pid = self()
 
     sentinel =
-      Path.join(sentinel_dir, "crank_sentinel_#{System.unique_integer([:positive])}#{ext}")
+      Path.join(sentinel_dir, "drum_sentinel_#{System.unique_integer([:positive])}#{ext}")
 
     sub_ref =
-      Crank.subscribe(
+      Drum.subscribe(
         "watcher readiness probe",
         fn _ctx, signal ->
           case signal do
@@ -906,7 +906,7 @@ defmodule Crank.SubscriptionsTest do
     do_wait_for_watcher_ready(watch_ref, sentinel, deadline)
 
     File.rm(sentinel)
-    Crank.unsubscribe(sub_ref)
+    Drum.unsubscribe(sub_ref)
   end
 
   defp do_wait_for_watcher_ready(watch_ref, sentinel, deadline) do
@@ -926,7 +926,7 @@ defmodule Crank.SubscriptionsTest do
   end
 
   defp lookup_subscription_pid(subscription_ref) do
-    [{pid, _}] = Registry.lookup(Crank.Subscriptions.SubscriberRegistry, subscription_ref)
+    [{pid, _}] = Registry.lookup(Drum.Subscriptions.SubscriberRegistry, subscription_ref)
     pid
   end
 
@@ -967,7 +967,7 @@ defmodule Crank.SubscriptionsTest do
 
   defp await_watcher_update(watch_ref, changed_path, timeout) do
     receive do
-      {:crank_event, {:watcher_updated, ^watch_ref, %{changed: changed}}} ->
+      {:drum_event, {:watcher_updated, ^watch_ref, %{changed: changed}}} ->
         if changed_path in changed do
           changed
         else

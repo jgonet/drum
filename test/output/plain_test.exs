@@ -1,8 +1,8 @@
-defmodule Crank.Output.PlainTest do
+defmodule Drum.Output.PlainTest do
   use ExUnit.Case, async: true
   import ExUnit.CaptureIO
-  alias Crank.Output.Plain
-  alias Crank.Output.Utils
+  alias Drum.Output.Plain
+  alias Drum.Output.Utils
 
   describe "format_duration/1" do
     test "milliseconds under 1s" do
@@ -66,7 +66,10 @@ defmodule Crank.Output.PlainTest do
     assert output =~ ~r/^Start \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\)/m
     assert output =~ ">> compile\n"
     assert output =~ "ok compile  230ms\n"
-    assert output =~ ~r/OK: 1 ok, 0 skipped \| started \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z \| 230ms total/
+
+    assert output =~
+             ~r/OK: 1 ok, 0 skipped \| started \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z \| 230ms total/
+
     refute output =~ "Compiled ok"
   end
 
@@ -91,12 +94,12 @@ defmodule Crank.Output.PlainTest do
            id: ids.step,
            name: "compile",
            group_id: nil,
-           reason: {:action_error, %Crank.CommandError{exit_code: 1, cmd: "mix compile"}},
+           reason: {:action_error, %Drum.CommandError{exit_code: 1, cmd: "mix compile"}},
            now_ms: t1
          }},
         {:pipeline_failed, ids.pipeline,
          %{
-           reason: {:action_error, %Crank.CommandError{exit_code: 1, cmd: "mix compile"}},
+           reason: {:action_error, %Drum.CommandError{exit_code: 1, cmd: "mix compile"}},
            now_ms: t1
          }}
       ])
@@ -226,7 +229,7 @@ defmodule Crank.Output.PlainTest do
            id: s2,
            name: "dialyzer",
            group_id: ids.group,
-           reason: {:action_error, %Crank.CommandError{exit_code: 1, cmd: "mix dialyzer"}},
+           reason: {:action_error, %Drum.CommandError{exit_code: 1, cmd: "mix dialyzer"}},
            now_ms: t2
          }},
         {:group_failed, ids.pipeline,

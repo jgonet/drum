@@ -1,7 +1,7 @@
-defmodule Crank.ConfigTest do
+defmodule Drum.ConfigTest do
   use ExUnit.Case, async: true
 
-  alias Crank.Config
+  alias Drum.Config
 
   def id_resolver(raw), do: raw
 

@@ -1,9 +1,9 @@
-defmodule Crank.MixProject do
+defmodule Drum.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :crank,
+      app: :drum,
       version: "0.1.0",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
@@ -18,7 +18,7 @@ defmodule Crank.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      mod: {Crank.Application, []},
+      mod: {Drum.Application, []},
       extra_applications: [:logger, :erlexec]
     ]
   end

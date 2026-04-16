@@ -1,18 +1,18 @@
-defmodule Crank.Test.PipelineHelpers do
+defmodule Drum.Test.PipelineHelpers do
   import ExUnit.Assertions
 
-  def run_pipeline(%Crank.Pipeline{} = pipeline) do
+  def run_pipeline(%Drum.Pipeline{} = pipeline) do
     id = pipeline.id
-    Crank.Output.Test.subscribe(id, self())
-    ExUnit.Callbacks.on_exit(fn -> Crank.Output.Test.unsubscribe(id) end)
-    ^id = Crank.run(pipeline)
+    Drum.Output.Test.subscribe(id, self())
+    ExUnit.Callbacks.on_exit(fn -> Drum.Output.Test.unsubscribe(id) end)
+    ^id = Drum.run(pipeline)
     {:ok, id}
   end
 
   def await_pipeline(pipeline_id, timeout \\ 5_000) do
     receive do
-      {:crank_event, {:pipeline_finished, ^pipeline_id, data}} -> {:ok, data}
-      {:crank_event, {:pipeline_failed, ^pipeline_id, data}} -> {:error, data}
+      {:drum_event, {:pipeline_finished, ^pipeline_id, data}} -> {:ok, data}
+      {:drum_event, {:pipeline_failed, ^pipeline_id, data}} -> {:error, data}
     after
       timeout -> {:error, :timeout}
     end
@@ -30,13 +30,13 @@ defmodule Crank.Test.PipelineHelpers do
       Enum.reverse(acc)
     else
       receive do
-        {:crank_event, {:pipeline_finished, ^pipeline_id, _} = event} ->
+        {:drum_event, {:pipeline_finished, ^pipeline_id, _} = event} ->
           Enum.reverse([event | acc])
 
-        {:crank_event, {:pipeline_failed, ^pipeline_id, _} = event} ->
+        {:drum_event, {:pipeline_failed, ^pipeline_id, _} = event} ->
           Enum.reverse([event | acc])
 
-        {:crank_event, {_, ^pipeline_id, _} = event} ->
+        {:drum_event, {_, ^pipeline_id, _} = event} ->
           do_collect(pipeline_id, [event | acc], deadline)
       after
         remaining -> Enum.reverse(acc)
@@ -69,8 +69,8 @@ defmodule Crank.Test.PipelineHelpers do
   # opts: tag: (default :step_pid), result: (default :ok), release: (default :release)
   def gated_step(pipeline_or_name, name_or_pid, opts \\ [])
 
-  def gated_step(%Crank.Pipeline{} = pipeline, name, test_pid) do
-    Crank.Pipeline.add(pipeline, gated_step(name, test_pid, []))
+  def gated_step(%Drum.Pipeline{} = pipeline, name, test_pid) do
+    Drum.Pipeline.add(pipeline, gated_step(name, test_pid, []))
   end
 
   def gated_step(name, test_pid, opts) do
@@ -78,7 +78,7 @@ defmodule Crank.Test.PipelineHelpers do
     result = Keyword.get(opts, :result, :ok)
     release = Keyword.get(opts, :release, :release)
 
-    Crank.step(name, fn _ctx, _cmd_opts ->
+    Drum.step(name, fn _ctx, _cmd_opts ->
       send(test_pid, {tag, self()})
 
       receive do
@@ -87,8 +87,8 @@ defmodule Crank.Test.PipelineHelpers do
     end)
   end
 
-  def gated_step(%Crank.Pipeline{} = pipeline, name, test_pid, opts) do
-    Crank.Pipeline.add(pipeline, gated_step(name, test_pid, opts))
+  def gated_step(%Drum.Pipeline{} = pipeline, name, test_pid, opts) do
+    Drum.Pipeline.add(pipeline, gated_step(name, test_pid, opts))
   end
 
   # Cleanup helper — registers an on_exit to remove a directory
